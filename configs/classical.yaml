@@ -1,0 +1,38 @@
+# Hiperparámetros del pipeline clásico (H4 + H5).
+# Cargado por scripts/run_classical_*.py.
+
+proposals:
+  mode: fast              # "fast" (~1000) o "quality" (~2000)
+  max_per_image: 300      # cap proposals/imagen tras Selective Search (orden = score SS)
+  max_side: 640           # resize antes de SS
+
+labeling:
+  pos_iou: 0.5            # IoU >= pos_iou contra GT -> positivo, etiqueta = clase GT
+  neg_iou: 0.3            # IoU < neg_iou contra TODAS las GT -> negativo (background)
+  # (IoU entre pos_iou y neg_iou se descarta de training)
+
+training_set:
+  max_neg_per_image: 10   # cap negativos por imagen (positivos: todos)
+  seed: 42
+
+classifier:
+  C: 1.0                  # LinearSVC C
+  sample_steps: 2         # AdditiveChi2Sampler sample_steps (2-3 razonable)
+  max_iter: 5000
+
+inference:
+  score_thresh: 0.0       # threshold sobre decision_function (signed margin)
+                          # 0.0 = neutral; subir para mas precision, menor recall
+  nms_iou: 0.5            # IoU threshold para NMS por clase
+  top_k_per_image: 100    # cap detecciones por imagen tras NMS
+
+hard_negative:
+  rounds: 2               # nº rondas mining (cada ronda re-entrena)
+  fp_score_thresh: 0.0    # FPs son proposals predichas con score > thresh pero IoU < neg_iou
+  max_new_per_image: 20   # cap hard negatives nuevos por imagen y ronda
+
+paths:
+  codebook: data/processed/codebook.pkl
+  features_cache: data/processed/classical_features.npz   # X, y cacheados
+  model: data/processed/classical_svm.pkl                 # clasificador entrenado
+  predictions: reports/predictions/classical_test.json    # COCO JSON sobre test
