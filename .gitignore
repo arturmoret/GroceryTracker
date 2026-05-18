@@ -45,6 +45,9 @@ reports/predictions/*
 !reports/tables/.gitkeep
 !reports/predictions/.gitkeep
 
+# Claude Code (local CLI state, never commit)
+.claude/
+
 # IDE
 .vscode/
 .idea/

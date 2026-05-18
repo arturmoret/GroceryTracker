@@ -15,9 +15,9 @@ from rich.panel import Panel
 
 console = Console()
 
-EXPECTED_ARCHIVES = [
-    "d2s_images_v1.tar.xz",
-    "d2s_annotations_v1.tar.xz",
+ARCHIVE_PATTERNS = [
+    "d2s_images_v*.tar.xz",
+    "d2s_annotations_v*.tar.xz",
 ]
 
 
@@ -36,7 +36,13 @@ def is_extracted(d2s_dir: Path) -> bool:
 
 
 def archives_present(raw_dir: Path) -> list[Path]:
-    return [raw_dir / name for name in EXPECTED_ARCHIVES if (raw_dir / name).is_file()]
+    """Return the first matching file for each archive pattern (sorted, newest version wins)."""
+    found: list[Path] = []
+    for pattern in ARCHIVE_PATTERNS:
+        matches = sorted(raw_dir.glob(pattern))
+        if matches:
+            found.append(matches[-1])
+    return found
 
 
 def print_download_instructions(raw_dir: Path) -> None:
@@ -46,8 +52,8 @@ def print_download_instructions(raw_dir: Path) -> None:
         "1. Abrir: https://www.mvtec.com/company/research/datasets/mvtec-d2s\n"
         "2. Rellenar formulario, aceptar términos.\n"
         "3. Descargar:\n"
-        "   - d2s_images_v1.tar.xz\n"
-        "   - d2s_annotations_v1.tar.xz\n"
+        "   - d2s_images_v*.tar.xz\n"
+        "   - d2s_annotations_v*.tar.xz\n"
         f"4. Mover ambos archivos a:\n   [cyan]{raw_dir}[/cyan]\n"
         "5. Volver a ejecutar este script."
     )
@@ -69,7 +75,7 @@ def prepare(raw_dir: Path, d2s_dir: Path) -> int:
         return 0
 
     present = archives_present(raw_dir)
-    if len(present) < len(EXPECTED_ARCHIVES):
+    if len(present) < len(ARCHIVE_PATTERNS):
         print_download_instructions(raw_dir)
         return 1
 

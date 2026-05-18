@@ -1,36 +1,60 @@
-# 14 clases objetivo (subset MVTec D2S × Mercadona).
+# 20 clases objetivo — subset MVTec D2S verificado en H1.
 #
-# Los nombres bajo `d2s_names` son los identificadores tal y como aparecen
-# en el campo `name` de la sección `categories` del JSON COCO de D2S.
-# Estos son **provisionales** — el notebook 00_dataset_eda.ipynb imprime la
-# lista real de categorías D2S; ajustar aquí si algún nombre no coincide
-# (p. ej. variantes con tamaño o idioma alemán).
+# Nombres = `name` exactos del campo `categories` en los JSON COCO de D2S
+# (verificado contra D2S_training.json + D2S_validation.json).
+#
+# Diseño con triadas/pares confusables para análisis Clásico vs DL fine-grained:
+#   - 4 manzanas: misma forma, color/textura distintos → HOG falla, BoVW dudoso,
+#     YOLO debería distinguir → contraste fuerte para el informe.
+#   - 3 pasta Reggia: mismo packaging azul, distinta forma a través del plástico.
+#   - 2 Coca-Cola: misma lata, color rojo vs plata.
+#   - 2 Corny: misma marca, distinto sabor (chocolate-plátano vs nueces).
+#   - 2 uvas: misma forma, color verde vs morada.
+#   - 2 tomates: variantes similares (vine vs roma-vine).
+#   - 2 clementinas: presentación distinta (malla vs suelta) → test de pose.
+#   - 3 singletons: zanahoria, pepino, kiwi → diversidad de forma.
 
 target_classes:
-  - group: cereales_kelloggs
+  - group: apples
     items:
-      - kelloggs_cornflakes
-      - kelloggs_choco_krispies
-      - kelloggs_special_k
-      - kelloggs_frosties
-      - kelloggs_froot_loops
-      - kelloggs_smacks
-  - group: chocolatinas
+      - apple_braeburn_bundle
+      - apple_golden_delicious
+      - apple_granny_smith
+      - apple_red_boskoop
+  - group: pasta_reggia
     items:
-      - mars
-      - snickers
-      - twix
-  - group: haribo
+      - pasta_reggia_elicoidali
+      - pasta_reggia_fusilli
+      - pasta_reggia_spaghetti
+  - group: coca_cola
     items:
-      - haribo_goldbaeren_300g
-      - haribo_tropi_frutti
-      - haribo_smurfs
-      - haribo_pasta_basta_erdbeer
-  - group: bebidas
+      - coca_cola_05
+      - coca_cola_light_05
+  - group: corny
     items:
-      - red_bull
+      - corny_nussvoll
+      - corny_schoko_banane
+  - group: grapes
+    items:
+      - grapes_green_sugraone_seedless
+      - grapes_sweet_celebration_seedless
+  - group: tomatoes
+    items:
+      - vine_tomatoes
+      - roma_vine_tomatoes
+  - group: clementines
+    items:
+      - clementine
+      - clementine_single
+  - group: produce
+    items:
+      - carrot
+      - cucumber
+      - kiwi
 
-# Mínimos aceptables de muestras por clase (verificación H1)
+# Mínimos aceptables de muestras por clase (verificación H1).
+# Ajustados a la realidad de D2S: el subset elegido tiene train ∈ [60, 270]
+# y val ∈ [90, 360] por clase.
 min_samples:
-  train: 150
-  test: 30
+  train: 60
+  test: 60
