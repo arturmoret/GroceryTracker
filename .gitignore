@@ -48,6 +48,9 @@ reports/predictions/*
 # Claude Code (local CLI state, never commit)
 .claude/
 
+# Run logs (regenerable, can grow large)
+logs/
+
 # IDE
 .vscode/
 .idea/
