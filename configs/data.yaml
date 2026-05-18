@@ -1,0 +1,19 @@
+# Rutas relativas a la raíz del repositorio
+paths:
+  raw_dir: data/raw
+  d2s_dir: data/d2s
+  d2s_images: data/d2s/images
+  d2s_annotations: data/d2s/annotations
+  processed_dir: data/processed
+
+# Archivos de anotaciones D2S (formato COCO)
+d2s_splits:
+  train: D2S_training.json
+  val: D2S_validation.json
+  test: D2S_test.json
+
+# Splits filtrados al subset de 14 clases (output de H2)
+filtered_splits:
+  train: data/processed/train.json
+  val: data/processed/val.json
+  test: data/processed/test.json

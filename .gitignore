@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data — never commit dataset payloads
+data/raw/*.tar.xz
+data/raw/*.zip
+data/d2s/
+data/processed/
+
+# Model artifacts
+models/
+*.pt
+*.pth
+*.pkl
+*.joblib
+runs/
+yolov8*.pt
+wandb/
+
+# Reports — outputs regenerables
+reports/figures/*
+reports/tables/*
+reports/predictions/*
+!reports/figures/.gitkeep
+!reports/tables/.gitkeep
+!reports/predictions/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

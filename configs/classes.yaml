@@ -1,0 +1,36 @@
+# 14 clases objetivo (subset MVTec D2S × Mercadona).
+#
+# Los nombres bajo `d2s_names` son los identificadores tal y como aparecen
+# en el campo `name` de la sección `categories` del JSON COCO de D2S.
+# Estos son **provisionales** — el notebook 00_dataset_eda.ipynb imprime la
+# lista real de categorías D2S; ajustar aquí si algún nombre no coincide
+# (p. ej. variantes con tamaño o idioma alemán).
+
+target_classes:
+  - group: cereales_kelloggs
+    items:
+      - kelloggs_cornflakes
+      - kelloggs_choco_krispies
+      - kelloggs_special_k
+      - kelloggs_frosties
+      - kelloggs_froot_loops
+      - kelloggs_smacks
+  - group: chocolatinas
+    items:
+      - mars
+      - snickers
+      - twix
+  - group: haribo
+    items:
+      - haribo_goldbaeren_300g
+      - haribo_tropi_frutti
+      - haribo_smurfs
+      - haribo_pasta_basta_erdbeer
+  - group: bebidas
+    items:
+      - red_bull
+
+# Mínimos aceptables de muestras por clase (verificación H1)
+min_samples:
+  train: 150
+  test: 30
