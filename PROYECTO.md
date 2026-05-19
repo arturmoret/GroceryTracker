@@ -1,6 +1,6 @@
-# Proyecto ABP — Detección de productos de Mercadona: Visión Clásica vs Deep Learning
+# Proyecto ABP — Detección de productos en MVTec D2S: Visión Clásica vs Deep Learning
 
-> **Briefing para futuras sesiones de Claude Code.** Este documento contiene todo el contexto, decisiones tomadas, justificación técnica, estructura de repositorio, hoja de ruta y pendientes. Leer entero antes de tocar código.
+> **Briefing para futuras sesiones de Claude Code.** Estado a fecha del último commit. Leer entero antes de tocar código.
 
 ---
 
@@ -9,454 +9,481 @@
 - **Estudiante**: Artur Moret, Escola d'Enginyeria (UAB).
 - **Asignatura**: ABP de Visión por Computador.
 - **Modalidad**: Individual.
-- **Hardware disponible**: sin GPU local. Todo entrenamiento en **Google Colab / Kaggle (T4 gratis)**.
+- **Hardware**: sin GPU local. Entrenamiento en **Google Colab free / Kaggle / segundo PC Fedora**.
 - **Entregables**:
   - Código + repositorio limpio.
   - Informe extenso con metodología y resultados.
   - Presentación.
-  - Notebooks de desarrollo (para inspeccionar evolución).
+  - Notebooks de desarrollo.
   - Demo webcam en vivo: nice-to-have, no obligatorio.
 
 ## 1. Objetivo
 
-Diseñar, implementar y evaluar **dos pipelines paralelos** que detecten el mismo conjunto de productos en imágenes:
+Diseñar, implementar y evaluar **dos pipelines paralelos** que detecten el mismo conjunto de productos:
 
-- **Pipeline A — Visión por Computador clásica** (sin redes neuronales profundas).
+- **Pipeline A — Visión por Computador clásica** (sin deep learning).
 - **Pipeline B — Deep Learning** (YOLOv8s).
 
-Ambos reciben las mismas imágenes, predicen las mismas etiquetas + bounding boxes, y se comparan con las mismas métricas sobre el mismo split de test. El **verdadero entregable académico es la comparativa cuantitativa y cualitativa entre paradigmas**, no batir el estado del arte.
+Ambos pipelines reciben las mismas imágenes, predicen bbox + clase sobre el mismo conjunto de clases y se evalúan con las mismas métricas sobre el mismo split de test. **El verdadero entregable académico es la comparativa cuantitativa y cualitativa entre paradigmas**, no batir SOTA.
 
-**Caso de uso final**: usuario muestra un producto a una webcam y el sistema lo detecta + clasifica. **No es detección en estantería de supermercado** — escena típica = un producto presentado a cámara, fondo libre o ligeramente cluttered.
+**Caso de uso**: usuario muestra un producto a una webcam y el sistema lo detecta + clasifica. **No es detección en estantería real de supermercado** — escena típica = uno o pocos productos sobre superficie clara.
 
-## 2. Decisiones cerradas (con razonamiento)
+## 2. Decisiones cerradas
 
 | Decisión | Valor | Razón |
 |---|---|---|
-| Dataset | **MVTec D2S** (público) | 60 SKUs específicos europeos, bbox + máscaras, train con objetos sueltos sobre superficie clara (~webcam-like), test con escenas cluttered. Académicamente sólido, paper citable, splits estándar. |
-| Tarea | **Detección (bbox + clase)** | Justifica las métricas mAP/IoU pedidas por el alumno. El sistema dibuja caja alrededor del producto y lo clasifica. |
-| Nº de clases | **14** | Subset D2S × Mercadona. Productos verificables en Mercadona España. Mantiene triadas confusables para análisis de errores. |
-| Pipeline A | **Selective Search + (HOG + SIFT/BoVW) + SVM χ²** | Detección clásica honesta sin caer en heurísticas de color. Descrito en sección 4. |
-| Pipeline B | **Solo YOLOv8s** (descartado Faster R-CNN) | Decisión del alumno. Simplicidad sobre rigor adicional. |
-| Robustez | **Sí incluida** | Test perturbado (ruido, blur, iluminación). Análisis de degradación A vs B = oro académico. |
-| Gestión deps | **`uv`** | Gestiona venv + lockfile + install rápido. Un solo `uv sync`. |
-| Configs | **YAML + dataclasses + `argparse`** | Sin Hydra. Estándar Python, cero magia. Defaults en YAML, overrides básicos por CLI. |
+| Dataset | **MVTec D2S** (público) | 60 SKUs específicos europeos, bbox + máscaras, train con objetos sueltos sobre superficie clara (~webcam-like), val con escenas cluttered. Académicamente sólido. |
+| Tarea | **Detección (bbox + clase)** | Justifica mAP/IoU. El sistema dibuja caja alrededor del producto y lo clasifica. |
+| Nº de clases | **20** | Subset de D2S elegido para maximizar diversidad y triadas confusables (ver §3). |
+| Preprocesado | **Gray World WB + CLAHE Lab + Bilateral denoise** | Handcrafted, ON por defecto. Aplica antes de Selective Search + features. |
+| Pipeline A | **Selective Search + (HOG + SIFT/BoVW) + AdditiveChi2Sampler + LinearSVC OvR + Hard Neg Mining** | Detección clásica honesta sin caer en heurísticas de color. |
+| Pipeline B | **YOLOv8s** (descartado Faster R-CNN) | Decisión del alumno. Simplicidad sobre rigor adicional. |
+| Robustez | **Sí incluida** (pendiente H8) | Test perturbado (ruido, blur, iluminación). Comparativa A vs B. |
+| Gestión deps | **`uv`** | Venv + lockfile + install rápido. Un solo `uv sync`. |
+| Configs | **YAML + `argparse`** | Sin Hydra. Defaults en YAML, overrides básicos por CLI. |
+| Ejecución cara | **Google Colab + Drive** (workflow primario) | PC del alumno demasiado lento. Pipeline H4-H5+infer corren en Colab CPU con checkpoint reanudable cada 100 imgs. |
 
-## 3. Las 14 clases (provisional, a confirmar tras EDA H1)
+## 3. Las 20 clases (verificadas en D2S, EDA H1)
 
-Subset de MVTec D2S filtrado a productos verificables en Mercadona España. Diseño con **triadas confusables** para enriquecer análisis de errores.
+Subset de MVTec D2S elegido para diversidad de forma + triadas/pares confusables que enriquezcan el análisis de errores. Nombres exactos de la categoría D2S (`name` en `categories` del JSON COCO):
 
-**Cereales Kellogg's** (cajas grandes — confusables mismo packaging marca):
-1. Kellogg's Cornflakes
-2. Kellogg's Choco Krispies
-3. Kellogg's Special K
-4. Kellogg's Frosties
-5. Kellogg's Froot Loops
-6. Kellogg's Smacks
+**Manzanas (4 — color/textura distintos, misma forma)**:
+1. `apple_braeburn_bundle`
+2. `apple_golden_delicious`
+3. `apple_granny_smith`
+4. `apple_red_boskoop`
 
-**Chocolatinas** (barritas — forma similar, color de envoltorio distinto):
+**Pasta Reggia (3 — mismo packaging azul, distinta forma visible)**:
+5. `pasta_reggia_elicoidali`
+6. `pasta_reggia_fusilli`
+7. `pasta_reggia_spaghetti`
 
-7. Mars
-8. Snickers
-9. Twix
+**Coca-Cola (2 — misma lata, color rojo vs plata)**:
+8. `coca_cola_05`
+9. `coca_cola_light_05`
 
-**Chuches Haribo** (bolsas flexibles — packaging Haribo característico, contenido distinto):
+**Corny (2 — misma marca/forma, distinto sabor)**:
+10. `corny_nussvoll`
+11. `corny_schoko_banane`
 
-10. Haribo Goldbären (Ositos de Oro)
-11. Haribo Tropi Frutti
-12. Haribo Smurfs (Pitufos)
-13. Haribo Pasta Basta
+**Uvas (2 — verde vs morada)**:
+12. `grapes_green_sugraone_seedless`
+13. `grapes_sweet_celebration_seedless`
 
-**Bebidas**:
+**Tomates (2 — variantes muy similares)**:
+14. `vine_tomatoes`
+15. `roma_vine_tomatoes`
 
-14. Red Bull 250ml lata
+**Clementinas (2 — presentación distinta: malla vs sueltas)**:
+16. `clementine`
+17. `clementine_single`
 
-**Cobertura de forma**: 6 cajas cartón, 3 barritas, 4 bolsas flexibles, 1 lata. Diversidad razonable.
+**Producto singleton (3 — formas claramente distintas, anchor de control)**:
+18. `carrot`
+19. `cucumber`
+20. `kiwi`
 
-**Triadas/confusables intencionales**:
-- 6 Kellogg's con mismo logo/marca → distinguir variante por etiqueta interior.
-- 4 Haribo con misma marca + tipo de bolsa → contenido y color secundario cambian.
-- 3 chocolatinas marcas distintas → mismo formato barrita.
+**Triadas/pares confusables intencionales**: 4 manzanas, 3 pasta Reggia, 2 Coca-Cola, 2 Corny, 2 uvas, 2 tomates, 2 clementinas.
 
-**Hipótesis comparativa**: pipeline clásico va a confundir variantes dentro de triadas (BoVW capta presencia de logo Kellogg's pero falla en distinguir "Choco Krispies" de "Special K"). YOLOv8s va a distinguir variantes con mayor fidelidad. **Esa diferencia ES el resultado interesante del proyecto.**
+**Hipótesis comparativa**: el pipeline clásico va a confundir variantes dentro de cada triada/par (HOG falla con frutas — forma similar; BoVW falla con pasta — packaging idéntico, contenido visible solo por translucencia). YOLOv8s debería distinguir mejor. **Esa diferencia ES el resultado interesante del proyecto.**
 
-**Acción H1**: tras descargar D2S, verificar conteos por clase (mínimo aceptable ~150 train / ~30 test por clase). Si alguna queda corta, sustituir desde D2S o reducir nº de clases.
+**Mínimos verificados** (`configs/classes.yaml`):
+- train: ≥60 muestras por clase (rango real ~60-270).
+- test: ≥60 muestras por clase (rango real ~90-360 antes del split val/test 30/70).
 
-## 4. Pipeline A — Visión por Computador Clásica
+## 4. Pipeline A — Visión por Computador Clásica (implementado, H1-H5)
 
 ### 4.1. Arquitectura end-to-end
 
 ```
 imagen
-  → Selective Search (region proposals, ~2000 bboxes candidatos)
-  → por cada proposal: extraer HOG + SIFT(BoVW histograma) → concatenar features
-  → SVM χ² multi-clase (one-vs-rest, 14 SVMs) → score por clase + score "background"
-  → filtrar proposals con max score < threshold
+  → Preprocesado (Gray World WB → CLAHE Lab → Bilateral denoise)
+  → Selective Search "fast" (resize max 640px, ≤300 proposals)
+  → por cada proposal: HOG (64×64 gris) + SIFT/BoVW(K=300) → concatenar [HOG | BoVW]
+  → AdditiveChi2Sampler (sample_steps=2 en Colab / 1 en local) + LinearSVC OvR (20 SVMs binarios)
+  → por proposal: argmax score sobre clases target + threshold sobre decision_function
   → NMS por clase (IoU > 0.5)
   → bboxes finales con etiqueta y confianza
 ```
 
-### 4.2. Componentes técnicos (con explicación pedagógica para el informe)
+### 4.2. Componentes técnicos
 
-#### Selective Search
-Algoritmo de **region proposal sin clase**.
-- Sobre-segmenta imagen (Felzenszwalb) → ~500 regiones pequeñas.
-- Itera mergeando regiones vecinas por similitud (color, textura, tamaño, fill).
-- Cada nivel de merge produce candidatos bbox.
-- Output: ~2000 bboxes por imagen, cada uno potencialmente conteniendo un objeto.
-- Implementación: `cv2.ximgproc.createSelectiveSearchSegmentation()` (OpenCV contrib).
+#### Preprocesado handcrafted (`classical/preprocessing.py`)
 
-#### HOG (Histogram of Oriented Gradients)
-Descriptor de **forma/silueta global**.
-- Gradientes por pixel (Sobel).
-- División en celdas 8×8 px, histograma de 9 orientaciones por celda.
-- Normalización por bloques 2×2 celdas (robustez a iluminación).
-- Concatenación → vector ~3780-D para 64×128 px.
+Aplicado a CADA imagen antes de Selective Search + feature extraction. Asegura consistencia train↔inferencia.
+
+1. **Gray World White Balance** — corrige tinte de iluminación (`mean_per_channel → scale`).
+2. **CLAHE** sobre canal L de Lab — iguala contraste local (`clipLimit=2.0`, `tileGridSize=(8,8)`).
+3. **Bilateral filter** — suaviza ruido preservando bordes (`d=7`, `sigmaColor=50`, `sigmaSpace=50`).
+
+Orden justificado: WB primero (opera sobre la imagen tal cual), CLAHE sobre colores ya neutros, denoise al final porque CLAHE amplifica ruido en zonas oscuras.
+
+Activable/desactivable globalmente o por paso en `configs/classical.yaml: preprocessing`.
+
+#### Selective Search (`classical/proposals.py`)
+
+Region proposal sin clase. `cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()`.
+
+- Modo `fast` (~1000 proposals) o `quality` (~2000).
+- Cap a 300 por imagen tras Selective Search (orden = score interno SS).
+- Resize previo a max 640px lado largo (`resize_for_proposals`); proposals se reescalan al tamaño original (`scale_proposals`).
+
+#### HOG (`classical/descriptors/hog.py`)
+
+`skimage.feature.hog` sobre crop redimensionado a **64×64** en escala de grises.
+
+- 9 orientaciones, celdas 8×8 px, bloques 2×2 celdas, normalización L2-Hys.
+- Dim resultante: 1764 (= `hog_dim(64,64)`).
 - Funciona bien con objetos rígidos (cajas, latas). Sufre con bolsas deformables.
 
-#### SIFT (Scale-Invariant Feature Transform)
-Detector + descriptor de **keypoints locales**.
-- Detecta puntos de interés en multi-escala (Difference of Gaussians).
-- Por keypoint: parche 16×16 dividido en 4×4 sub-celdas con histograma 8 orientaciones cada una → vector 128-D.
-- Invariante a rotación, escala, parcial a iluminación.
-- Captura logos, letras, patrones distintivos del packaging.
-- Implementación: `cv2.SIFT_create()`.
+#### SIFT (`classical/descriptors/sift.py`)
 
-#### BoVW (Bag of Visual Words)
-Convierte un conjunto variable de SIFTs en vector de longitud fija.
-1. Extraer SIFT de todas las imágenes train → millones de descriptores 128-D.
-2. **k-means** sobre todos esos descriptores con K=1500 → 1500 centroides = "vocabulario visual".
-3. Para imagen/proposal nuevo: extraer SIFTs, asignar cada uno al centroide más cercano, contar → histograma de longitud 1500.
-4. Normalizar L2.
-- Análogo a bag-of-words de NLP, pero con parches visuales.
-- Resultado = "firma" de qué texturas/patrones contiene la región, sin importar dónde ni cuántos.
-- K=1500 elegido por nº de clases mayor (14); con 5 clases sería 500-1000.
+`cv2.SIFT_create()`. Singleton cacheado para no re-instanciar.
 
-#### Feature final por proposal
-Concatenación: `[HOG (3780-D), BoVW (1500-D)]` → vector ~5280-D, normalizado L2.
+- Detect + descriptor en escala de grises.
+- Vector 128-D por keypoint.
+- **Optimización clave**: SIFT se extrae UNA VEZ sobre la imagen completa; en `features.py` los keypoints se filtran por bbox de proposal. ~10× speedup vs ejecutar SIFT por crop.
 
-#### SVM con kernel χ²
-- SVM separa clases maximizando margen.
-- Kernel χ² adecuado para histogramas: `K(x,y) = exp(-γ · Σᵢ (xᵢ-yᵢ)² / (xᵢ+yᵢ))`.
-- Penaliza más diferencias en bins pequeños, donde están las palabras visuales raras y discriminativas.
-- Multi-clase: **one-vs-rest** → 14 SVMs binarios (clase vs resto + background).
-- Implementación: `sklearn.svm.SVC(kernel=chi2_kernel_precomputed)` o `kernel='precomputed'` con matriz Gram precomputada.
+#### BoVW (`classical/descriptors/bovw.py`)
 
-#### Hard negative mining
-Pipeline propenso a falsos positivos sobre fondo.
-1. Train inicial sobre proposals positivos (IoU≥0.5 con GT) + sample random de negativos.
-2. Inferencia sobre train: extraer proposals clasificados como producto pero con IoU<0.3 con GT = falsos positivos.
-3. Añadir esos al set de negativos.
-4. Reentrenar.
-- Ciclo 2-3 veces. Mejora precision sin tocar arquitectura.
+Codebook = `sklearn.cluster.KMeans` (NO `MiniBatchKMeans` — cuelgues silenciosos en algunas builds Windows).
 
-#### NMS (Non-Maximum Suppression)
-- Ordenar predicciones por confianza descendente.
-- Coger top, marcar como definitiva.
-- Descartar las que solapan IoU>0.5 con ella.
-- Repetir.
-- Output: 1 bbox por instancia real.
+- **K=300** centroides (no 1500). Entrenado por `scripts/train_codebook.py` sobre SIFTs de 300 imgs train (cap 400 desc/img).
+- `init='random'` (más rápido que k-means++).
+- `max_iter=30`, `n_init=1`.
+- Encoding (`encode_bovw`): histograma bincount sobre asignaciones, L2 normalizado.
+- Dim: 300.
 
-### 4.3. Honestidad académica
+#### Feature final por proposal (`classical/features.py`)
 
-Pipeline A **va a perder en mAP contra YOLOv8s**. Eso ES el resultado interesante; el objetivo no es ganarle a YOLO, es **cuantificar la brecha y entender dónde el clásico se rompe**.
+Concatenación `[HOG (1764) | BoVW (300)]` = vector 2064-D, clip ≥0, L2-normalizado. Compatible con AdditiveChi2Sampler (requiere no-negativo).
+
+#### Clasificador (`classical/classifier.py`)
+
+Aproximación Vedaldi-Zisserman al kernel χ². Más rápida y memoria-eficiente que `SVC(kernel='precomputed')` con matriz Gram completa.
+
+1. **AdditiveChi2Sampler** (`sklearn.kernel_approximation`) con `sample_steps=1` (local, memoria mínima) o `sample_steps=2` (Colab, calidad mejor — dim ×3).
+2. **OneVsRestClassifier(LinearSVC)** sobre la expansión.
+3. `n_jobs=1` por defecto (memoria-safe en Mac 8GB; cada worker copia la matriz expandida). `n_jobs=-1` solo si ≥16 GB libres (Colab tira de esto).
+4. `C=1.0`, `dual='auto'`, `max_iter=5000`.
+
+#### Etiquetado (`classical/labeling.py`)
+
+Para construir el training set:
+- `BACKGROUND = 0`. Target classes = 1..20 (renumeradas en `prepare_splits.py`).
+- IoU≥0.5 con alguna GT → positivo, label = clase de la GT.
+- IoU<0.3 con TODAS las GT → negativo (BACKGROUND).
+- Entre 0.3 y 0.5 → ignorado (`-1`, no se entrena con él).
+
+#### NMS (`classical/nms.py`)
+
+NMS independiente por clase, IoU>0.5, cap `top_k_per_image=100`.
+
+#### Hard Negative Mining (`classical/hard_negative.py`)
+
+Para cada imagen train:
+1. Predice con SVM actual sobre proposals.
+2. FP = proposals con `score > fp_score_thresh` Y `IoU < neg_iou` con todas las GT.
+3. Top-K FPs (ordenados por score descendente) → al training set como BACKGROUND.
+4. Re-fit SVM.
+5. Repite por `hard_negative.rounds` rondas (default 2).
+
+Estado persistido en `.hardneg_state.json` (completed_rounds) y checkpoint parcial en `classical_features.hardneg_partial.npz`.
+
+### 4.3. Checkpoint reanudable (todos los stages)
+
+Cada script soporta resume automático tras corte (Colab muere, kernel cae, OOM):
+
+- **`build_training_features`**: vuelca `data/processed/classical_features.npz` con `X`, `y`, `processed_image_ids` cada 100 imgs nuevas. Al relanzar, salta image_ids ya en el set.
+- **`mine_hard_negatives`**: análogo, vuelca `classical_features.hardneg_partial.npz`. + state JSON con rondas completadas → salta a la siguiente.
+- **`run_classical_infer`**: flush incremental del JSON cada 100 imgs. Al relanzar, carga el JSON existente, marca `image_id`s ya predichos, los salta.
+
+`checkpoint_every: 100` configurable en `classical.yaml`. Flags `--rebuild-features`, `--reset`, `--rebuild` para forzar desde cero.
+
+### 4.4. Honestidad académica
+
+Pipeline A va a perder en mAP contra YOLOv8s. **Eso ES el resultado interesante**: cuantificar la brecha y entender dónde el clásico se rompe.
 
 Hipótesis de qué falla:
-- Bolsas Haribo (forma deformable) → HOG inestable.
-- Triadas Kellogg's → BoVW capta marca pero falla variante.
-- Iluminación variable → SIFT relativamente robusto, color histogram (si se añade) falla.
+- Triadas confusables (manzanas, pasta, Coca-Cola Light vs Regular) → HOG capta forma común, BoVW capta marca común, ambos fallan en la variante.
+- Frutas sin packaging → SIFT pobre (poca textura distintiva), HOG inestable (forma variable por orientación).
+- Selective Search puede no proponer el bbox correcto para frutas pequeñas o muy juntas.
 
-## 5. Pipeline B — Deep Learning
+## 5. Pipeline B — Deep Learning (pendiente H6)
 
 ### 5.1. Modelo
 
-**YOLOv8s pretrained en COCO**, fine-tune sobre 14 clases.
+**YOLOv8s pretrained COCO**, fine-tune sobre 20 clases.
 
 Justificación:
-- YOLOv8n: demasiado pequeño, riesgo de no superar claramente al clásico.
+- YOLOv8n: demasiado pequeño, riesgo de no superar al clásico claramente.
 - YOLOv8m/l: pesados para Colab gratis (sesiones se cortan).
-- **YOLOv8s = sweet spot**. Entrena en T4 en ~2-3h para 14 clases.
-- Single-shot detector: real-time inference (~10 ms/imagen en T4) — compatible con demo webcam.
+- **YOLOv8s = sweet spot**. Entrena en T4 free en ~2-3h.
+- Single-shot: ~10 ms/img en T4, compatible con demo webcam.
 
-Faster R-CNN descartado por decisión del alumno (simplicidad).
+### 5.2. Augmentations (dominio retail)
 
-### 5.2. Augmentations (sensatas para dominio retail)
+- Mosaic (default YOLOv8).
+- Mixup ligero (alpha 0.1).
+- HSV jitter moderado.
+- Flip horizontal SÍ, vertical NO.
+- Rotación ±15°.
+- Random scale + crop.
+- Cutout/erasing ligero.
 
-- **Mosaic** (default YOLOv8): combina 4 imágenes en una.
-- **Mixup ligero**: alpha 0.1.
-- **HSV jitter** moderado: H±0.015, S±0.7, V±0.4 (iluminación supermercado vs casa).
-- **Flip horizontal sí, vertical NO**: productos no aparecen invertidos en uso real.
-- **Rotación pequeña**: ±15°.
-- **Random scale + crop**.
-- **Erasing/cutout ligero**: simula occlusión parcial.
-
-### 5.3. Estrategia de entrenamiento
+### 5.3. Entrenamiento
 
 - Transfer learning desde pesos COCO.
-- Freeze backbone 5 épocas iniciales, luego unfreeze todo.
-- 50-100 épocas, **early stopping** sobre `mAP@0.5 val`.
-- Batch 16 (YOLOv8s en T4 cabe).
-- Optimizer: SGD con momentum 0.937, weight decay 5e-4 (defaults YOLOv8).
-- LR cosine schedule, warmup 3 épocas.
-- Semillas fijas para reproducibilidad.
+- Freeze backbone 5 épocas, luego unfreeze todo.
+- 50-100 épocas, early stopping sobre `mAP@0.5 val`.
+- Batch 16 (YOLOv8s en T4).
+- SGD momentum 0.937, weight decay 5e-4, LR cosine + warmup.
+- Semillas fijas.
 
-### 5.4. Implementación
+### 5.4. Implementación pendiente
 
-Librería: `ultralytics` (oficial YOLOv8). API:
-```python
-from ultralytics import YOLO
-model = YOLO('yolov8s.pt')
-model.train(data='configs/d2s_mercadona.yaml', epochs=100, ...)
-```
-Salida: predicciones en formato YOLO → conversión a COCO JSON para evaluación común.
+Pendiente crear:
+- `configs/deep_yolo.yaml`
+- `src/grocery_detection/data/coco_to_yolo.py` — convierte `train.json`, `val.json` a formato YOLO (txt por imagen + dataset YAML).
+- `src/grocery_detection/deep/train.py` — wrapper alrededor de `ultralytics.YOLO`.
+- `src/grocery_detection/deep/infer.py`.
+- `src/grocery_detection/deep/export_coco.py` — YOLO preds → COCO JSON.
+- `notebooks/colab_yolo_train.ipynb`.
 
-## 6. Framework de evaluación común
+## 6. Framework de evaluación común (pendiente H7)
 
-Capa única que come predicciones en formato **COCO JSON** de ambos pipelines y produce comparativa.
+Capa única que come predicciones COCO JSON de ambos pipelines y produce comparativa.
 
 ### 6.1. Métricas obligatorias
 
 - **mAP@0.5** y **mAP@0.5:0.95** (`pycocotools`).
-- **Accuracy global**.
-- **F1 por clase** + macro F1.
-- **IoU medio sobre verdaderos positivos**.
-- **Matriz de confusión 14×14** (asignación greedy por IoU≥0.5, clase background como 15ª fila/columna).
-- **Curvas Precision-Recall por clase**.
-- **Tiempo de inferencia por imagen** (ms), medido en igual hardware:
-  - CPU local (laptop del alumno).
-  - GPU Colab T4.
+- Accuracy global.
+- F1 por clase + macro F1.
+- IoU medio sobre TPs.
+- **Matriz confusión 20×20** + clase background (21×21).
+- Curvas PR por clase.
+- Tiempo inferencia ms/img en igual hardware.
 
-### 6.2. Métricas adicionales (valor añadido)
+### 6.2. Métricas adicionales
 
-- **Tiempo de entrenamiento total**: pipeline A no usa GPU; pipeline B sí. Justifica trade-off coste-beneficio.
-- **Tamaño de modelo on-disk**:
-  - Pipeline A: codebook k-means + 14 SVMs (.pkl) → ~10-50 MB estimado.
-  - Pipeline B: YOLOv8s pesos → ~22 MB.
-- **Análisis cualitativo**: top-K fallos por clase, visualizaciones side-by-side de predicciones A vs B sobre las mismas imágenes (para informe).
+- Tiempo entrenamiento total (clásico CPU vs DL GPU).
+- Tamaño modelo on-disk.
+- Análisis cualitativo: top-K fallos por clase, side-by-side A vs B.
 
-### 6.3. Análisis de robustez (sección 7) — métricas extra sobre test perturbado
+### 6.3. Pendiente
 
-## 7. Análisis de robustez
+- `src/grocery_detection/eval/metrics.py`
+- `src/grocery_detection/eval/confusion.py`
+- `src/grocery_detection/eval/timing.py`
+- `scripts/run_evaluation.py`
 
-Test set adicional aplicando perturbaciones controladas al test original. Para cada perturbación, recalcular todas las métricas y comparar degradación A vs B.
+## 7. Análisis de robustez (pendiente H8)
 
-### Perturbaciones
+Test perturbado con:
+- Ruido gaussiano σ ∈ {0.01, 0.05, 0.1}.
+- Blur σ ∈ {1, 3, 5} px.
+- Brillo {0.5×, 0.75×, 1.25×, 1.5×}.
+- JPEG quality {70, 50, 30}.
+- Oclusión cuadrado 20% area random.
 
-- **Ruido gaussiano**: σ ∈ {0.01, 0.05, 0.1} sobre imagen normalizada.
-- **Blur**: kernel gaussiano σ ∈ {1, 3, 5} px.
-- **Iluminación**: multiplicación brillo {0.5×, 0.75×, 1.25×, 1.5×}.
-- **JPEG compression artifacts**: quality ∈ {70, 50, 30}.
-- **Oclusión parcial**: cuadrado negro 20% área en posición random.
+Curva degradación mAP@0.5 vs nivel, por pipeline.
 
-### Reporte
+Pendiente: `src/grocery_detection/eval/robustness.py` + `scripts/run_robustness.py`.
 
-- Curva de degradación mAP@0.5 vs nivel de perturbación, por pipeline.
-- Hipótesis a verificar: DL más robusto a perturbaciones leves, posiblemente más frágil a oclusión.
-
-## 8. Estructura de repositorio
+## 8. Estructura de repositorio (estado actual)
 
 ```
 grocery-detection/
-├── README.md                        # quick start: instalación + ejemplo
-├── PROYECTO.md                      # ESTE archivo (briefing completo)
-├── pyproject.toml                   # uv-managed deps
+├── README.md
+├── PROYECTO.md                         # ESTE archivo
+├── RUN_LOCAL_FEDORA.md                 # quickstart local Fedora
+├── RUN_COLAB.md                        # quickstart Colab + Drive
+├── pyproject.toml                      # uv-managed deps
 ├── .python-version
 ├── uv.lock
 ├── .gitignore
 ├── configs/
-│   ├── classes.yaml                 # 14 clases finales
-│   ├── data.yaml                    # paths dataset, splits
-│   ├── classical.yaml               # hyperparams pipeline A
-│   ├── deep_yolo.yaml               # hyperparams pipeline B
-│   ├── eval.yaml                    # métricas y thresholds
-│   └── robustness.yaml              # niveles de perturbación
+│   ├── classes.yaml                    # 20 clases finales
+│   ├── data.yaml                       # paths dataset, splits
+│   └── classical.yaml                  # hyperparams pipeline A (incl. preprocessing, checkpoint)
 ├── src/grocery_detection/
 │   ├── __init__.py
 │   ├── data/
-│   │   ├── download_d2s.py          # descarga MVTec D2S
-│   │   ├── filter_classes.py        # subset a 14 clases
-│   │   ├── prepare.py               # splits, conversión a COCO JSON
-│   │   └── visualize.py             # bboxes overlay para EDA
+│   │   ├── download_d2s.py             # extracción D2S desde .tar.xz
+│   │   ├── filter_classes.py           # subset a 20 clases con IDs contiguos
+│   │   ├── prepare.py                  # stratified split val/test
+│   │   ├── eda.py                      # helpers para EDA notebook
+│   │   └── visualize.py
 │   ├── classical/
-│   │   ├── proposals.py             # Selective Search
+│   │   ├── preprocessing.py            # WB + CLAHE + denoise
+│   │   ├── proposals.py                # Selective Search
 │   │   ├── descriptors/
 │   │   │   ├── hog.py
 │   │   │   ├── sift.py
-│   │   │   └── bovw.py              # codebook k-means + asignación
-│   │   ├── codebook.py              # entrenamiento vocabulario visual
-│   │   ├── classifier.py            # SVM χ² OvR, RF baseline
-│   │   ├── hard_negative.py         # mining loop
+│   │   │   └── bovw.py
+│   │   ├── features.py                 # extract_features_batch (HOG + BoVW)
+│   │   ├── labeling.py                 # IoU-based pos/neg/ignore
+│   │   ├── training_set.py             # build_training_features con checkpoint
+│   │   ├── classifier.py               # AdditiveChi2 + LinearSVC OvR
+│   │   ├── hard_negative.py            # mining loop con resume
 │   │   ├── nms.py
-│   │   └── pipeline.py              # detect() end-to-end
-│   ├── deep/
-│   │   ├── train.py                 # wrapper ultralytics
-│   │   ├── infer.py
-│   │   └── export_coco.py           # predicciones YOLO → COCO JSON
-│   ├── eval/
-│   │   ├── metrics.py               # mAP, IoU, F1, accuracy
-│   │   ├── confusion.py             # matriz confusión con asignación greedy
-│   │   ├── pr_curves.py
-│   │   ├── timing.py                # benchmark inferencia
-│   │   ├── robustness.py            # generación test perturbado + eval
-│   │   └── compare.py               # tablas + figuras comparativas
-│   ├── demo/
-│   │   └── webcam.py                # demo en vivo (opcional)
+│   │   ├── iou.py
+│   │   └── pipeline.py                 # detect() end-to-end
 │   └── utils/
-│       ├── coco_format.py
-│       ├── config.py                # carga YAML + dataclasses
-│       └── seed.py
+│       ├── config.py                   # carga YAML + repo_root()
+│       └── seed.py                     # seeding global reproducible
+├── scripts/
+│   ├── setup.ps1 / setup.sh            # uv install + uv sync
+│   ├── prepare_d2s.py                  # extracción D2S
+│   ├── prepare_splits.py               # 20-class filter + val/test split
+│   ├── train_codebook.py               # KMeans K=300 sobre SIFTs train
+│   ├── test_classical_tiny.py          # smoke test 5+3 imgs
+│   ├── run_classical_train.py          # H4: build features + SVM
+│   ├── run_classical_hard_neg.py       # H5: mining + refit
+│   ├── run_classical_infer.py          # inference test → COCO JSON
+│   ├── import_colab_svm.py             # wrap artifact Colab → ClassicalSVM
+│   ├── run_overnight.ps1 / .sh         # train → hardneg → infer chain
+│   ├── colab_helper.py                 # helpers para notebooks Colab
+│   ├── generate_overview_pdf.py        # PDF H1-H5
+│   └── generate_onboarding_pdf.py      # PDF colaboradores
 ├── notebooks/
-│   ├── 00_dataset_eda.ipynb         # exploración D2S, conteos, ejemplos
-│   ├── 01_class_selection.ipynb     # filtrado + verificación 14 clases
-│   ├── 02_classical_dev.ipynb       # desarrollo iterativo pipeline A
-│   ├── 03_deep_dev.ipynb            # desarrollo iterativo pipeline B
-│   ├── 04_comparison.ipynb          # comparativa final
-│   ├── 05_robustness.ipynb          # análisis robustez
-│   └── 06_error_analysis.ipynb      # qualitative deep dive en fallos
-├── scripts/                         # entry points reproducibles
-│   ├── run_classical_train.py
-│   ├── run_classical_infer.py
-│   ├── run_deep_train.py
-│   ├── run_deep_infer.py
-│   ├── run_evaluation.py
-│   └── run_robustness.py
-├── tests/                           # unit tests sobre métricas y conversiones
-│   ├── test_metrics.py
-│   ├── test_coco_format.py
-│   └── test_nms.py
+│   ├── 00_dataset_eda.ipynb            # H1 — exploración D2S, conteos
+│   ├── 01_class_selection.ipynb        # H2 — criterios + verificación 20 clases
+│   ├── 02_classical_dev.ipynb          # H3 — demo componentes
+│   ├── 03_training_visualization.ipynb # proposals + labels + features
+│   ├── 04_classical_results.ipynb      # métricas + confusión sobre test
+│   ├── 05_preprocessing_viz.ipynb      # ablation del preprocesado
+│   ├── colab_build_features.ipynb      # build features en Colab (H4)
+│   ├── colab_train_svm.ipynb           # SVM fit en Colab (calidad full)
+│   ├── colab_hard_neg.ipynb            # mining en Colab (H5)
+│   └── colab_infer.ipynb               # inferencia en Colab
 └── reports/
-    ├── figures/                     # PNG/SVG generados, export-ready
-    ├── tables/                      # CSV/Markdown generados
-    └── predictions/                 # JSON COCO de cada pipeline + perturbation
+    ├── H1-H5_overview.pdf              # snapshot resultados
+    ├── onboarding_colaboradores.pdf
+    ├── figures/                        # generadas por notebooks/eval
+    ├── tables/
+    └── predictions/
+        └── classical_test.json         # output de inferencia (gitignored)
 ```
 
 ### Principios
 
-- Configs en YAML, **sin hardcode** de paths/hyperparams en código.
-- CLI con `argparse` simple en cada script.
-- Semillas fijas para reproducibilidad.
-- Tests unitarios sobre métricas y conversiones de formato (no sobre training).
-- Notebooks **solo para exploración y desarrollo iterativo**, no como entry point de producción.
-- `pyproject.toml` con `uv`, lockfile en git.
+- Configs en YAML, sin hardcode.
+- CLI con `argparse` simple. Scripts imprimen `[boot]` antes de imports pesados para feedback rápido.
+- Semillas fijas globales (`utils.seed.set_seed`).
+- `pyproject.toml` con `uv`, lockfile (`uv.lock`) en git.
+- Notebooks como notebooks de desarrollo (exploración / visualización), no entry-point.
 
-## 9. Hoja de ruta — Hitos
+## 9. Hoja de ruta
 
-| Hito | Descripción | Salida concreta |
+| Hito | Descripción | Estado |
 |---|---|---|
-| **H1** | Setup repo + descarga D2S + EDA | Repo inicializado con `uv`, D2S descargado, notebook `00_dataset_eda.ipynb` con conteos por clase y ejemplos visuales |
-| **H2** | Selección 14 clases definitiva | `configs/classes.yaml` cerrado, splits train/val/test fijos en COCO JSON, `01_class_selection.ipynb` documenta criterios |
-| **H3** | Pipeline A — proposals + descriptores | Selective Search funcionando, extracción HOG+SIFT+BoVW probada en notebook |
-| **H4** | Pipeline A — entrenamiento + inferencia | `run_classical_train.py` produce SVMs entrenados, `run_classical_infer.py` produce predicciones COCO JSON sobre test |
-| **H5** | Pipeline A — hard negative mining | Mejora medida sobre baseline (notebook con before/after) |
-| **H6** | Pipeline B — YOLOv8s fine-tune | Modelo entrenado en Colab, predicciones COCO JSON sobre test |
-| **H7** | Framework evaluación común | `run_evaluation.py` genera tablas + figuras comparativas autogeneradas a partir de los dos JSONs |
-| **H8** | Análisis de robustez | Test perturbado generado, métricas recalculadas, curvas de degradación |
-| **H9** | Demo webcam (opcional) | `webcam.py` carga ambos modelos, live inference |
-| **H10** | Informe + presentación | Drafts con figuras/tablas auto-generadas referenciadas |
+| **H1** | Setup repo + descarga D2S + EDA | ✅ `prepare_d2s.py` + `00_dataset_eda.ipynb`. 20 clases verificadas ≥60 train / ≥60 val. |
+| **H2** | Selección 20 clases + splits filtrados | ✅ `prepare_splits.py` + `01_class_selection.ipynb`. Splits en `data/processed/`. |
+| **H3** | Componentes pipeline clásico + codebook | ✅ `classical/proposals.py`, `descriptors/{hog,sift,bovw}.py`, `features.py`, `labeling.py`, `preprocessing.py`, `train_codebook.py`. Codebook K=300. |
+| **H4** | Pipeline A — training + inferencia | ✅ `training_set.py` + `classifier.py` + `pipeline.py` + scripts CLI. Checkpoint reanudable cada 100 imgs. |
+| **H5** | Pipeline A — hard negative mining | ✅ `hard_negative.py` + `run_classical_hard_neg.py`. Resume a 2 niveles (ronda + intra-ronda). |
+| **Colab workflow** | Ejecutar H4-H5 en Colab | ✅ `scripts/colab_helper.py` + 4 notebooks (`colab_build_features`, `colab_train_svm`, `colab_hard_neg`, `colab_infer`). |
+| **H6** | Pipeline B — YOLOv8s fine-tune | ⏳ pendiente. |
+| **H7** | Framework evaluación común | ⏳ pendiente. |
+| **H8** | Análisis de robustez | ⏳ pendiente. |
+| **H9** | Demo webcam | ⏳ opcional. |
+| **H10** | Informe + presentación | ⏳ paralelo a H6-H8. |
 
 ## 10. Stack técnico
 
 ### Lenguaje y entorno
-- Python 3.11+
-- Gestor: **`uv`** (`uv init`, `uv add`, `uv sync`).
+- Python 3.11.
+- Gestor: **`uv`** (`uv sync --all-extras`).
 
-### Dependencias principales
+### Dependencias
 
-**Core**:
-- `numpy`, `scipy`, `pandas`
-- `opencv-contrib-python` (necesita contrib para `ximgproc`/SIFT/Selective Search)
-- `pillow`
-- `pyyaml`
+**Core**: numpy, scipy, pandas, opencv-contrib-python (necesario para `ximgproc` + SIFT), pillow, pyyaml.
 
-**Pipeline A**:
-- `scikit-learn` (k-means, SVM, RandomForest)
-- `scikit-image` (HOG)
+**Pipeline A**: scikit-learn (KMeans, LinearSVC, AdditiveChi2Sampler), scikit-image (HOG).
 
-**Pipeline B**:
-- `torch`, `torchvision`
-- `ultralytics`
+**Pipeline B** (pendiente H6): torch, torchvision, ultralytics.
 
-**Eval**:
-- `pycocotools`
-- `matplotlib`, `seaborn`
-- `tqdm`
+**Eval** (pendiente H7): pycocotools, matplotlib, seaborn.
 
-**Demo webcam**:
-- `opencv-contrib-python` (ya incluido)
+**UX**: tqdm, rich, requests.
 
-**Dev**:
-- `pytest`
-- `ruff` (lint+format)
-- `ipykernel` (notebooks)
+**Dev**: pytest, ruff, ipykernel, jupyter, notebook.
 
 ### Hardware
-- Desarrollo local: laptop Windows 11, sin GPU. Solo para pipeline A (CPU) y código.
-- Entrenamiento pipeline B: **Google Colab** (T4 free) o **Kaggle Notebooks**.
-- Dataset D2S montado en Drive para acceso desde Colab.
+- Desarrollo local: Windows / Mac / Fedora.
+- Entrenamiento pipeline A: Colab CPU (T4 free no aporta — Selective Search/SIFT/HOG son CPU-only) o PC local lo suficientemente rápido.
+- Entrenamiento pipeline B: Colab GPU T4 free.
+- Dataset D2S: subido por usuario a Drive `MyDrive/grocery-detection/raw/`.
 
 ## 11. Reproducibilidad
 
-- **Semilla global** en cada script: `seed.py` con `random`, `numpy`, `torch`, `cv2.setRNGSeed`.
-- Splits guardados como JSON fijo en `configs/data.yaml` (no resampleados en cada run).
-- Versiones de deps fijadas en `uv.lock`.
-- Comandos exactos para reproducir cada hito documentados en `README.md`.
+- Semilla global `seed=42` en cada script vía `utils.seed.set_seed` (random + numpy + torch + cv2).
+- Splits guardados como JSON fijo en `data/processed/`. No se resamplea por ejecución.
+- `uv.lock` fija versiones de todas las deps.
+- Comandos exactos para reproducir cada stage documentados en `README.md` + `RUN_LOCAL_FEDORA.md` + `RUN_COLAB.md`.
+- Checkpoint reanudable: cualquier corte se recupera sin perder más de N imágenes (default N=100).
 
 ## 12. Pendientes / decisiones abiertas
 
-- [ ] **Verificación final de las 14 clases**: tras descargar D2S en H1, confirmar que cada clase tiene ≥150 muestras train y ≥30 test. Sustituir las que no.
-- [ ] **Hyperparams pipeline A**: K del codebook BoVW (1500 propuesto), γ del kernel χ², threshold de confianza, threshold NMS. Iterar en notebook 02.
-- [ ] **Threshold de score** para filtrar proposals en pipeline A: empezar con 0.5, calibrar por curva PR.
-- [ ] **Estrategia background class** para SVM OvR: ¿clase explícita o solo "ninguna clase con score > threshold"?
-- [ ] **Demo webcam**: si se hace, decidir UI (puro OpenCV vs Streamlit/Gradio).
-- [ ] **Métrica primaria** para informe: probablemente mAP@0.5, pero confirmar tras ver resultados.
+- [ ] **Aplicar fix symlink-Drive en `colab_helper.py`**: `data/processed/` como symlink a `MyDrive/grocery-detection/processed/` → cada checkpoint se escribe directo a Drive, robusto frente a desconexiones Colab. Propuesto, no implementado.
+- [ ] **Atomic write** (`tmp + rename`) en `_save_partial` de `training_set.py` y `hard_negative.py` — protege contra corrupción mid-write. Propuesto, no implementado.
+- [ ] H6 — YOLOv8s scaffolding.
+- [ ] H7 — Framework evaluación común + unit tests sobre métricas.
+- [ ] H8 — Módulo de perturbaciones.
+- [ ] H9 — Demo webcam.
+- [ ] **Hyperparams pipeline A iterables** (en notebooks 02/03/04):
+  - K del codebook (300 actual, puede subirse).
+  - `proposals.max_per_image` (300 actual).
+  - `classifier.C`, `sample_steps`.
+  - `score_thresh` y `nms_iou` de inferencia.
+- [ ] **Métrica primaria** para informe: probablemente mAP@0.5 + matriz confusión.
 
 ## 13. Riesgos conocidos
 
-| Riesgo | Probabilidad | Mitigación |
-|---|---|---|
-| Alguna clase D2S tiene pocas muestras | Media | Sustituir clase desde lista de candidatas D2S-Mercadona alternativas; o reducir a 12-13 clases |
-| Selective Search lento en imágenes grandes | Alta | Resize de input a 640×480 antes de SS; cachear proposals en disco |
-| Colab desconecta durante entreno YOLOv8s | Media | Checkpoints cada 10 épocas, guardar en Drive |
-| Pipeline A clasifica casi todo como background | Media | Hard negative mining + ajuste threshold de score |
-| Diferencia A vs B no es suficientemente clara | Baja | Confiar en triadas confusables — el contraste va a aparecer ahí; reforzar con análisis de robustez |
-| Tamaño D2S excede cuota Drive gratis | Baja | D2S no es enorme; alternativa: dataset solo en Colab local storage por sesión |
+| Riesgo | Mitigación |
+|---|---|
+| Colab desconecta mid-run | Checkpoint cada 100 imgs. Resume automático. Keep-alive JS en navegador. Considerar Colab Pro. Aplicar fix symlink-Drive pendiente. |
+| PC local incapaz de correr H4 | Alternativa Colab consolidada con `RUN_COLAB.md`. Segundo PC Fedora documentado en `RUN_LOCAL_FEDORA.md`. |
+| Selective Search lento | `mode: fast` + `max_per_image: 300` + resize `max_side: 640`. Cachear proposals si fuese necesario. |
+| Pipeline A clasifica casi todo como background | Hard neg mining + ajuste `score_thresh`. |
+| Diferencia A vs B insuficiente | Triadas confusables — el contraste va a aparecer ahí. Análisis robustez refuerza. |
+| Tamaño D2S excede Drive free (15 GB) | D2S ocupa ~6-7 GB en `.tar.xz`. Tras extraer en `/content` (volátil) se borra al terminar sesión. Drive solo guarda raw archives + processed artifacts (~200 MB). |
 
 ## 14. Qué debe hacer la siguiente sesión de Claude Code
 
-**Estado al cerrar este briefing**: plan aprobado, **nada implementado todavía**. Punto de partida = H1.
+**Estado actual**: H1-H5 completos. Workflow Colab consolidado. Docs `RUN_LOCAL_FEDORA.md` y `RUN_COLAB.md` listos.
 
-### Acción inmediata
+### Acción inmediata posible
 
-1. Confirmar con el alumno que sigue de acuerdo con todo lo de este documento (lectura rápida).
-2. Inicializar repo:
-   ```powershell
-   uv init grocery-detection
-   cd grocery-detection
-   uv add numpy scipy pandas opencv-contrib-python pillow pyyaml scikit-learn scikit-image torch torchvision ultralytics pycocotools matplotlib seaborn tqdm
-   uv add --dev pytest ruff ipykernel
-   ```
-3. Crear estructura de directorios según sección 8.
-4. Descargar MVTec D2S (`src/grocery_detection/data/download_d2s.py`):
-   - URL oficial: https://www.mvtec.com/company/research/datasets/mvtec-d2s
-   - Requiere aceptar licencia; el script debe instruir al usuario, no descargar automáticamente sin consentimiento.
-5. Notebook `00_dataset_eda.ipynb`: cargar D2S, contar instancias por clase, verificar que las 14 propuestas tienen muestras suficientes, mostrar ejemplos.
-6. Reportar al alumno conteos reales y proponer ajustes a las 14 clases si hace falta.
+Opciones por orden de impacto:
 
-### No hacer en H1
+1. **Symlink-Drive fix** + atomic write — robustez Colab. ~20 min.
+2. **H6 — YOLOv8s scaffolding** (configs, conversion COCO→YOLO, train/infer wrappers, notebook Colab). ~45 min.
+3. **H7 — Framework evaluación** + unit tests sobre métricas con datos sintéticos. ~60 min.
+4. **H8 — Robustness perturbations module**. ~30 min.
 
-- **No** entrenar nada todavía.
-- **No** crear código de pipeline A ni B.
-- **No** crear scripts de evaluación.
-- Solo: setup + EDA + verificación de viabilidad de las 14 clases.
+### Estilo de trabajo del alumno
 
-### Estilo de trabajo preferido por el alumno
+- Estudiante UAB, conoce todo el stack (Python, NumPy, OpenCV, scikit-learn, PyTorch).
+- Quiere que Claude **dirija las decisiones técnicas** y proponga con justificación.
+- Espera **trade-offs explícitos** sobre cualquier decisión no obvia.
+- Sin diplomacia innecesaria. Si una opción es claramente mejor, decirlo.
+- PC del curro lento + segundo PC Fedora + Colab free → workflow primario en Colab.
+- Trabaja solo, sin presión de plazo comunicada.
 
-- Es estudiante UAB, conoce todo el stack (Python, NumPy, OpenCV, scikit-learn, PyTorch, TF/Keras).
-- Quiere que Claude **dirija las decisiones técnicas** y proponga.
-- Espera **justificaciones** de las decisiones (trade-offs explícitos).
-- Quiere ser **crítico** con las propuestas — sin diplomacia innecesaria si una opción es claramente mejor.
-- Trabaja solo, sin presión de plazos comunicada.
-- Sin GPU local — entrenamiento siempre va a Colab/Kaggle.
+### Cosas que NO hay que volver a hacer
+
+- Decidir clases (cerradas en `configs/classes.yaml`).
+- Cambiar pipeline A (consolidado y entrenable).
+- Migrar a otro dataset (D2S confirmado).
+
+### Cosas que SÍ pueden cambiar todavía
+
+- Hyperparams del pipeline A (K, C, thresholds) — iterar en notebooks tras ver resultados.
+- Familia DL en H6 si YOLOv8s da problemas (fallback YOLOv8n o RT-DETR).
+- Estructura del informe — pendiente hasta H10.
 
 ---
 
-**Fin del briefing.** Volver a leer si surge duda. Actualizar este documento conforme avancen los hitos.
+**Fin del briefing.** Actualizar este documento conforme avancen los hitos.
