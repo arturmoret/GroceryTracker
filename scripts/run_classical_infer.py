@@ -87,6 +87,7 @@ def main() -> int:
             score_thresh=inf_cfg["score_thresh"],
             nms_iou=inf_cfg["nms_iou"],
             top_k=inf_cfg["top_k_per_image"],
+            preprocessing_cfg=cls_cfg.get("preprocessing"),
         )
         for d in detections:
             x, y, w, h = d.bbox

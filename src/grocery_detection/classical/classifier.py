@@ -1,15 +1,14 @@
 """Chi-squared SVM classifier for the classical pipeline.
 
 Uses Vedaldi & Zisserman's *additive chi-squared* feature map (sklearn's
-`AdditiveChi2Sampler`) followed by a linear SVM. This approximates the
-exact chi-squared kernel SVM at a fraction of the training/inference cost,
-without requiring a precomputed Gram matrix kept in memory.
+`AdditiveChi2Sampler`) followed by a one-vs-rest linear SVM. This approximates
+the exact chi-squared kernel SVM at a fraction of the cost.
 
-Output shape from `decision_function`: (n_samples, n_classes_target),
-where each column is the signed margin for that target class (1..K). The
-BACKGROUND class is treated as the "negative" in the one-vs-rest training
-but is *not* a predicted class at inference — proposals are emitted only
-for target classes that score above a threshold.
+Memory-aware design: the chi-squared expansion is applied ONCE (outside the
+OvR loop), then 20 LinearSVC binary classifiers are fit serially (`n_jobs=1`
+by default). Parallel OvR with the AdditiveChi2 transform inside a Pipeline
+crashes 8 GB Macs because each joblib worker copies the expanded feature
+matrix; serial fitting keeps peak RAM well below 1 GB even for ~20k samples.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from pathlib import Path
 import numpy as np
 from sklearn.kernel_approximation import AdditiveChi2Sampler
 from sklearn.multiclass import OneVsRestClassifier
-from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 
 from .labeling import BACKGROUND
@@ -29,23 +27,24 @@ from .labeling import BACKGROUND
 
 @dataclass
 class ClassicalSVM:
-    """Trained classifier + the target-class id list it was trained on."""
+    """Trained AdditiveChi2 sampler + OvR LinearSVC, with target class id mapping."""
 
-    model: Pipeline
+    sampler: AdditiveChi2Sampler
+    svm: OneVsRestClassifier
     target_class_ids: list[int]
 
     def decision_function(self, X: np.ndarray) -> np.ndarray:
         """Return (n_samples, n_target_classes) margin matrix.
 
-        Target classes that were absent from the training labels (no binary
-        SVM was fit for them) get column `-inf` so they are never the argmax
-        and are always filtered by a positive `score_thresh`.
+        Target classes that were absent from training labels get column -inf
+        so they are never the argmax and are always filtered by score_thresh.
         """
-        seen = self.model.named_steps["svm"].classes_
-        raw = self.model.decision_function(X)
-        # Binary edge case: decision_function returns shape (n_samples,) — sklearn
-        # collapses OvR when only 2 classes exist. We expand to 2 columns where
-        # column 0 corresponds to seen[0] and column 1 to seen[1].
+        X = np.clip(X.astype(np.float32, copy=False), 0.0, None)
+        X_t = self.sampler.transform(X)
+        seen = self.svm.classes_
+        raw = self.svm.decision_function(X_t)
+        # Binary edge case: when only 2 classes were seen, OvR collapses to a
+        # single binary classifier whose decision_function is 1-D.
         if raw.ndim == 1:
             raw = np.stack([-raw, raw], axis=1)
         n = X.shape[0]
@@ -62,34 +61,43 @@ def train_chi2_svm(
     y: np.ndarray,
     target_class_ids: list[int],
     C: float = 1.0,
-    sample_steps: int = 2,
+    sample_steps: int = 1,
     max_iter: int = 5000,
     seed: int = 42,
     verbose: int = 0,
+    n_jobs: int = 1,
 ) -> ClassicalSVM:
-    """Fit AdditiveChi2Sampler + LinearSVC OvR.
+    """Fit AdditiveChi2Sampler + OvR LinearSVC.
 
-    Negative class (BACKGROUND) is included in `y` so that each binary SVM
-    learns class-vs-rest with background as part of "rest".
+    Chi-squared expansion is done once (single allocation). LinearSVCs are
+    then fit serially by default (`n_jobs=1`) — this is the memory-safe path
+    on macOS, which copies data per joblib worker.
     """
     if X.ndim != 2:
         raise ValueError(f"X must be 2-D, got shape {X.shape}")
     # AdditiveChi2Sampler requires non-negative input.
     X = np.clip(X.astype(np.float32, copy=False), 0.0, None)
-    seen = sorted(set(target_class_ids) | {BACKGROUND})
+
     missing_in_y = sorted(set(target_class_ids) - set(y.tolist()))
     if missing_in_y:
         print(f"  [warn] target classes ausentes en y: {missing_in_y}")
 
-    pipeline = Pipeline([
-        ("chi2", AdditiveChi2Sampler(sample_steps=sample_steps)),
-        ("svm", OneVsRestClassifier(
-            LinearSVC(C=C, dual="auto", max_iter=max_iter, random_state=seed, verbose=verbose),
-            n_jobs=-1,
-        )),
-    ])
-    pipeline.fit(X, y)
-    return ClassicalSVM(model=pipeline, target_class_ids=list(target_class_ids))
+    # Step 1: fit + transform chi2 expansion ONCE.
+    print(f"  [classifier] AdditiveChi2 expansion (sample_steps={sample_steps})...", flush=True)
+    sampler = AdditiveChi2Sampler(sample_steps=sample_steps)
+    X_t = sampler.fit_transform(X)
+    print(f"  [classifier] Expanded X: {X.shape} -> {X_t.shape}  "
+          f"(~{X_t.nbytes / 1024 / 1024:.0f} MB)", flush=True)
+
+    # Step 2: OvR LinearSVC on the transformed matrix.
+    print(f"  [classifier] Fitting OvR LinearSVC (n_jobs={n_jobs})...", flush=True)
+    svm = OneVsRestClassifier(
+        LinearSVC(C=C, dual="auto", max_iter=max_iter, random_state=seed, verbose=verbose),
+        n_jobs=n_jobs,
+    )
+    svm.fit(X_t, y)
+
+    return ClassicalSVM(sampler=sampler, svm=svm, target_class_ids=list(target_class_ids))
 
 
 def save(clf: ClassicalSVM, path: Path) -> None:

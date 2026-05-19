@@ -14,6 +14,7 @@ import numpy as np
 from .descriptors.bovw import load_codebook
 from .features import extract_features_batch, feature_dim
 from .labeling import BACKGROUND, label_proposals
+from .preprocessing import preprocess
 from .proposals import resize_for_proposals, scale_proposals, selective_search
 
 
@@ -29,6 +30,7 @@ def build_training_features(
     max_neg_per_image: int = 10,
     seed: int = 42,
     progress_every: int = 25,
+    preprocessing_cfg: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Iterate over train images, run SS, label proposals, extract features.
 
@@ -56,6 +58,7 @@ def build_training_features(
         if img is None:
             n_skipped += 1
             continue
+        img = preprocess(img, preprocessing_cfg)
         anns = anns_by_img.get(im["id"], [])
         gt_boxes = np.array([a["bbox"] for a in anns], dtype=np.float32) if anns else np.zeros((0, 4), dtype=np.float32)
         gt_labels = np.array([a["category_id"] for a in anns], dtype=np.int64) if anns else np.zeros((0,), dtype=np.int64)

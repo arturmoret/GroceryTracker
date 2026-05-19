@@ -90,6 +90,7 @@ def main() -> int:
             neg_iou=cls_cfg["labeling"]["neg_iou"],
             max_new_per_image=hn_cfg["max_new_per_image"],
             seed=args.seed + r,
+            preprocessing_cfg=cls_cfg.get("preprocessing"),
         )
         print(f"[round {r}] Mined {X_new.shape[0]} hard negatives in {time.time()-t0:.0f}s", flush=True)
         if X_new.shape[0] == 0:
@@ -108,6 +109,7 @@ def main() -> int:
             C=clf_cfg["C"],
             sample_steps=clf_cfg["sample_steps"],
             max_iter=clf_cfg["max_iter"],
+            n_jobs=clf_cfg.get("n_jobs", 1),
             seed=args.seed,
         )
         print(f"[round {r}] Refit done in {time.time()-t1:.0f}s", flush=True)

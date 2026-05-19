@@ -86,6 +86,7 @@ def main() -> int:
             neg_iou=lab_cfg["neg_iou"],
             max_neg_per_image=ts_cfg["max_neg_per_image"],
             seed=ts_cfg["seed"],
+            preprocessing_cfg=cls_cfg.get("preprocessing"),
         )
         print(f"[features] Done in {time.time()-t0:.0f}s  X={X.shape}, y={y.shape}", flush=True)
         save_features(features_path, X, y)
@@ -103,6 +104,7 @@ def main() -> int:
         C=clf_cfg["C"],
         sample_steps=clf_cfg["sample_steps"],
         max_iter=clf_cfg["max_iter"],
+        n_jobs=clf_cfg.get("n_jobs", 1),
         seed=args.seed,
     )
     print(f"[svm] Trained in {time.time()-t1:.0f}s", flush=True)

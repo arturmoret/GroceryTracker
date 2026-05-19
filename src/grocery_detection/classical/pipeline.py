@@ -9,6 +9,7 @@ import numpy as np
 from .classifier import ClassicalSVM
 from .features import extract_features_batch
 from .nms import nms_per_class
+from .preprocessing import preprocess
 from .proposals import resize_for_proposals, scale_proposals, selective_search
 
 
@@ -29,12 +30,15 @@ def detect(
     score_thresh: float = 0.0,
     nms_iou: float = 0.5,
     top_k: int | None = 100,
+    preprocessing_cfg: dict | None = None,
 ) -> list[Detection]:
     """Run the full classical detector on one image.
 
-    Steps: Selective Search -> feature extraction (batched SIFT) ->
-    chi^2 SVM scoring -> per-proposal max-class + threshold -> NMS per class.
+    Steps: preprocess (optional) -> Selective Search -> feature extraction
+    (batched SIFT) -> chi^2 SVM scoring -> per-proposal max-class + threshold
+    -> NMS per class.
     """
+    image = preprocess(image, preprocessing_cfg)
     resized, scale = resize_for_proposals(image, max_side=proposals_max_side)
     ss = selective_search(resized, mode=proposals_mode, max_proposals=proposals_max_per_image)
     proposals = scale_proposals(ss, scale).astype(np.float32)

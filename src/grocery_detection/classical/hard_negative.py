@@ -14,6 +14,7 @@ from .classifier import ClassicalSVM
 from .features import extract_features_batch
 from .iou import iou_matrix
 from .labeling import BACKGROUND
+from .preprocessing import preprocess
 from .proposals import resize_for_proposals, scale_proposals, selective_search
 
 
@@ -30,6 +31,7 @@ def mine_hard_negatives(
     max_new_per_image: int = 20,
     seed: int = 42,
     progress_every: int = 25,
+    preprocessing_cfg: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Find proposals that the current SVMs label as positive but are actually
     background (IoU < neg_iou with all GTs). Extract their features.
@@ -52,6 +54,7 @@ def mine_hard_negatives(
         img = cv2.imread(str(path))
         if img is None:
             continue
+        img = preprocess(img, preprocessing_cfg)
         anns = anns_by_img.get(im["id"], [])
         gt_boxes = (
             np.array([a["bbox"] for a in anns], dtype=np.float32)

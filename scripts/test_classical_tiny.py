@@ -70,6 +70,7 @@ def main() -> int:
         max_neg_per_image=5,
         seed=42,
         progress_every=1,
+        preprocessing_cfg=cls_cfg.get("preprocessing"),
     )
     print(f"[tiny-train] Features: X={X.shape}, y={y.shape}  (took {time.time()-t0:.0f}s)", flush=True)
     print(f"[tiny-train] Label distribution: {dict(zip(*np.unique(y, return_counts=True)))}", flush=True)
@@ -82,6 +83,7 @@ def main() -> int:
         C=cls_cfg["classifier"]["C"],
         sample_steps=cls_cfg["classifier"]["sample_steps"],
         max_iter=1000,
+        n_jobs=cls_cfg["classifier"].get("n_jobs", 1),
         seed=42,
     )
     print(f"[tiny-train] Trained in {time.time()-t0:.1f}s", flush=True)
@@ -102,6 +104,7 @@ def main() -> int:
             score_thresh=cls_cfg["inference"]["score_thresh"],
             nms_iou=cls_cfg["inference"]["nms_iou"],
             top_k=20,
+            preprocessing_cfg=cls_cfg.get("preprocessing"),
         )
         total_det += len(dets)
         cls_summary = {}

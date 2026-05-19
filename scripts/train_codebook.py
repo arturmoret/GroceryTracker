@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 print("[boot] importing project modules (will import sklearn)...", flush=True)
 from grocery_detection.classical.descriptors.bovw import save_codebook, train_codebook  # noqa: E402
 from grocery_detection.classical.descriptors.sift import compute_sift  # noqa: E402
+from grocery_detection.classical.preprocessing import preprocess  # noqa: E402
 from grocery_detection.classical.proposals import resize_for_proposals  # noqa: E402
 from grocery_detection.utils.config import load_yaml, repo_root  # noqa: E402
 from grocery_detection.utils.seed import set_seed  # noqa: E402
@@ -52,6 +53,11 @@ def main() -> int:
     set_seed(args.seed)
     root = repo_root()
     data_cfg = load_yaml(root / args.data_config)
+    cls_cfg_path = root / "configs" / "classical.yaml"
+    pp_cfg = load_yaml(cls_cfg_path).get("preprocessing") if cls_cfg_path.exists() else None
+    if pp_cfg and pp_cfg.get("enabled", False):
+        print(f"[setup] Preprocesado activo: WB={pp_cfg.get('white_balance')}, "
+              f"CLAHE={pp_cfg.get('clahe')}, denoise={pp_cfg.get('denoising')}", flush=True)
     train_json = root / data_cfg["filtered_splits"]["train"]
     img_dir = root / data_cfg["paths"]["d2s_images"]
 
@@ -75,6 +81,7 @@ def main() -> int:
         if img is None:
             skipped += 1
             continue
+        img = preprocess(img, pp_cfg)
         img, _ = resize_for_proposals(img, max_side=args.max_side)
         _, desc = compute_sift(img)
         if desc.shape[0] == 0:

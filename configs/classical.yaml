@@ -1,6 +1,21 @@
 # Hiperparámetros del pipeline clásico (H4 + H5).
 # Cargado por scripts/run_classical_*.py.
 
+# Preprocesado handcrafted aplicado a CADA imagen antes de Selective Search,
+# extraccion de features y entreno del codebook. Asegura consistencia
+# entrenamiento <-> inferencia: si lo activas, tienes que regenerar codebook
+# y features (--rebuild-features en run_classical_train.py).
+preprocessing:
+  enabled: true              # ON por defecto. Pon false para ablation.
+  white_balance: true        # Gray World
+  clahe: true                # CLAHE en canal L de Lab
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size: [8, 8]
+  denoising: true            # Bilateral filter
+  denoise_diameter: 7
+  denoise_sigma_color: 50.0
+  denoise_sigma_space: 50.0
+
 proposals:
   mode: fast              # "fast" (~1000) o "quality" (~2000)
   max_per_image: 300      # cap proposals/imagen tras Selective Search (orden = score SS)
@@ -17,8 +32,13 @@ training_set:
 
 classifier:
   C: 1.0                  # LinearSVC C
-  sample_steps: 2         # AdditiveChi2Sampler sample_steps (2-3 razonable)
+  sample_steps: 1         # AdditiveChi2Sampler sample_steps. 1 = output dim D*3
+                          # (~2x menos memoria que 2). 2 algo mejor pero OOMea
+                          # en Macs de 8GB. Subir solo si tienes >=16GB libres.
   max_iter: 5000
+  n_jobs: 1               # OvR LinearSVC paralelismo. 1 = serial (memoria minima,
+                          # ~5-15 min en Mac M-series). -1 = todos los cores pero
+                          # multiplica memoria por nº workers (OOM en Macs 8GB).
 
 inference:
   score_thresh: 0.0       # threshold sobre decision_function (signed margin)
