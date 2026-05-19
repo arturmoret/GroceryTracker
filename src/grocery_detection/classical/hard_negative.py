@@ -1,8 +1,12 @@
-"""Hard negative mining: add false positives back to the negative pool and retrain."""
+"""Hard negative mining: add false positives back to the negative pool and retrain.
+
+Soporta checkpoint a nivel de ronda (state JSON con `completed_rounds`) y dentro
+de la mining loop (cada N imágenes). Reanudable tras corte de Colab.
+"""
 
 from __future__ import annotations
 
-import random
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -32,27 +36,53 @@ def mine_hard_negatives(
     seed: int = 42,
     progress_every: int = 25,
     preprocessing_cfg: dict | None = None,
+    checkpoint_path: Path | None = None,
+    checkpoint_every: int = 100,
+    resume: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Find proposals that the current SVMs label as positive but are actually
-    background (IoU < neg_iou with all GTs). Extract their features.
+    """Find proposals que las SVMs etiquetan como positivo pero IoU<neg_iou con GT.
 
-    Returns (X_hardneg, y_hardneg) where y_hardneg is all BACKGROUND.
-    The caller concatenates these with the original training set and re-fits.
+    Reanudable: si `checkpoint_path` apunta a un .npz con X y processed_ids,
+    salta imágenes ya procesadas.
+
+    Returns (X_hardneg, y_hardneg) con y todo BACKGROUND.
     """
-    rng = random.Random(seed)
     images = coco["images"]
     anns_by_img: dict[int, list[dict]] = {}
     for ann in coco["annotations"]:
         anns_by_img.setdefault(ann["image_id"], []).append(ann)
 
     chunks_X: list[np.ndarray] = []
-    n_new = 0
+    processed_ids: set[int] = set()
+
+    if resume and checkpoint_path is not None and checkpoint_path.exists():
+        try:
+            cp = np.load(checkpoint_path, allow_pickle=False)
+            if "processed_ids" in cp.files and cp["X"].shape[0] >= 0:
+                X0 = cp["X"]
+                if X0.shape[0] > 0:
+                    chunks_X.append(X0)
+                processed_ids = {int(i) for i in cp["processed_ids"].tolist()}
+                print(
+                    f"[hard-neg] [resume] checkpoint: {X0.shape[0]} hard-neg samples, "
+                    f"{len(processed_ids)} imgs ya procesadas",
+                    flush=True,
+                )
+        except Exception as e:
+            print(f"[hard-neg] [resume] error checkpoint: {e!r}. Empiezo de cero.", flush=True)
+
+    n_new = sum(int(c.shape[0]) for c in chunks_X)
+    n_new_since_ckpt = 0
     t0 = time.time()
 
     for idx, im in enumerate(images, 1):
+        if im["id"] in processed_ids:
+            continue
         path = img_dir / im["file_name"]
         img = cv2.imread(str(path))
         if img is None:
+            processed_ids.add(im["id"])
+            n_new_since_ckpt += 1
             continue
         img = preprocess(img, preprocessing_cfg)
         anns = anns_by_img.get(im["id"], [])
@@ -65,6 +95,8 @@ def mine_hard_negatives(
         ss = selective_search(resized, mode=proposals_mode, max_proposals=proposals_max_per_image)
         proposals = scale_proposals(ss, scale).astype(np.float32)
         if proposals.shape[0] == 0:
+            processed_ids.add(im["id"])
+            n_new_since_ckpt += 1
             continue
 
         feats = extract_features_batch(img, proposals, codebook)
@@ -72,7 +104,6 @@ def mine_hard_negatives(
         best_score = scores.max(axis=1)
         is_predicted_positive = best_score > fp_score_thresh
 
-        # Compute IoU vs GT to identify "should have been background".
         if gt_boxes.shape[0]:
             ious = iou_matrix(proposals, gt_boxes).max(axis=1)
         else:
@@ -81,30 +112,82 @@ def mine_hard_negatives(
 
         hard_neg_mask = is_predicted_positive & is_truly_background
         hard_idx = np.where(hard_neg_mask)[0]
-        if hard_idx.size == 0:
-            continue
+        if hard_idx.size > 0:
+            order = np.argsort(-best_score[hard_idx])
+            hard_idx = hard_idx[order]
+            if hard_idx.size > max_new_per_image:
+                hard_idx = hard_idx[:max_new_per_image]
+            chunks_X.append(feats[hard_idx])
+            n_new += hard_idx.size
 
-        # Keep highest-scoring FPs (most informative)
-        order = np.argsort(-best_score[hard_idx])
-        hard_idx = hard_idx[order]
-        if hard_idx.size > max_new_per_image:
-            hard_idx = hard_idx[:max_new_per_image]
-
-        chunks_X.append(feats[hard_idx])
-        n_new += hard_idx.size
+        processed_ids.add(im["id"])
+        n_new_since_ckpt += 1
 
         if idx % progress_every == 0 or idx == len(images):
             print(
                 f"[hard-neg] [{idx:4d}/{len(images)}] elapsed {time.time()-t0:.0f}s "
-                f"hard_neg_total={n_new}",
+                f"hard_neg_total={n_new} done={len(processed_ids)}",
+                flush=True,
+            )
+
+        if checkpoint_path is not None and n_new_since_ckpt >= checkpoint_every:
+            _save_partial(checkpoint_path, chunks_X, processed_ids)
+            n_new_since_ckpt = 0
+            print(
+                f"[hard-neg] [checkpoint] saved → {checkpoint_path} "
+                f"({len(processed_ids)} imgs, {n_new} hard-negs)",
                 flush=True,
             )
 
     if not chunks_X:
-        return np.zeros((0, 1), dtype=np.float32), np.zeros((0,), dtype=np.int64)
-    X = np.vstack(chunks_X)
+        X = np.zeros((0, 1), dtype=np.float32)
+    else:
+        X = np.vstack(chunks_X)
     y = np.full(X.shape[0], BACKGROUND, dtype=np.int64)
+
     # Deterministic shuffle so order doesn't leak image identity into the SVM fit.
-    perm = np.arange(X.shape[0])
-    np.random.RandomState(seed).shuffle(perm)
-    return X[perm], y[perm]
+    if X.shape[0] > 0:
+        perm = np.arange(X.shape[0])
+        np.random.RandomState(seed).shuffle(perm)
+        X = X[perm]
+        y = y[perm]
+
+    if checkpoint_path is not None:
+        _save_partial(checkpoint_path, [X] if X.shape[0] else [], processed_ids)
+
+    return X, y
+
+
+def _save_partial(
+    path: Path,
+    chunks_X: list[np.ndarray],
+    processed_ids: set[int],
+) -> None:
+    if chunks_X:
+        X = np.vstack(chunks_X)
+    else:
+        X = np.zeros((0,), dtype=np.float32)
+    pids = np.array(sorted(processed_ids), dtype=np.int64)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, X=X, processed_ids=pids)
+
+
+# ---------------------------------------------------------------------------
+# Round-level state (qué ronda hemos terminado completamente)
+# ---------------------------------------------------------------------------
+
+def load_round_state(path: Path) -> int:
+    """Return número de la última ronda completada. 0 si no hay state."""
+    if not path.exists():
+        return 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(json.load(f).get("completed_rounds", 0))
+    except Exception:
+        return 0
+
+
+def save_round_state(path: Path, completed_rounds: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"completed_rounds": completed_rounds}, f)

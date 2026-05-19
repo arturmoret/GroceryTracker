@@ -53,6 +53,13 @@ hard_negative:
 
 paths:
   codebook: data/processed/codebook.pkl
-  features_cache: data/processed/classical_features.npz   # X, y cacheados
+  features_cache: data/processed/classical_features.npz   # X, y, processed_ids (checkpoint)
   model: data/processed/classical_svm.pkl                 # clasificador entrenado
   predictions: reports/predictions/classical_test.json    # COCO JSON sobre test
+  hardneg_checkpoint: data/processed/classical_features.hardneg_partial.npz
+  hardneg_state: data/processed/.hardneg_state.json       # marker con completed_rounds
+
+# Cada N imágenes nuevas procesadas, los scripts vuelcan checkpoint al disco.
+# Permite reanudar tras corte de Colab / kernel. Igual valor para features,
+# hard-neg mining e inferencia.
+checkpoint_every: 100

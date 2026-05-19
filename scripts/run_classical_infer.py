@@ -1,4 +1,14 @@
-"""CLI: run the classical detector over a COCO split and write predictions JSON."""
+"""CLI: run the classical detector over a COCO split and write predictions JSON.
+
+Checkpointing
+-------------
+La inferencia es per-imagen y barata si se persiste su salida. Cada N imágenes
+(configurable en classical.yaml: checkpoint_every) se vuelca el JSON de
+predicciones a `paths.predictions`. Si el proceso se corta, al relanzar
+se cargan las predicciones existentes y se saltan los `image_id` ya cubiertos.
+
+- Para empezar de cero: `--rebuild` (borra el JSON).
+"""
 
 from __future__ import annotations
 
@@ -29,11 +39,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run classical detector and write predictions.")
     parser.add_argument("--data-config", default="configs/data.yaml")
     parser.add_argument("--classical-config", default="configs/classical.yaml")
-    parser.add_argument("--split", default="test", help="Which split to infer on (default: test).")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Only run on the first N images (debug).")
-    parser.add_argument("--out", default=None,
-                        help="Override output JSON path (default from classical.yaml).")
+    parser.add_argument(
+        "--split", default="test",
+        help="Which split to infer on (default: test).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Only run on the first N images (debug).",
+    )
+    parser.add_argument(
+        "--out", default=None,
+        help="Override output JSON path (default from classical.yaml).",
+    )
+    parser.add_argument(
+        "--rebuild", action="store_true",
+        help="Borra predicciones existentes y empieza de cero.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -47,11 +68,16 @@ def main() -> int:
     codebook_path = root / cls_cfg["paths"]["codebook"]
     model_path = root / cls_cfg["paths"]["model"]
     out_path = root / (args.out if args.out else cls_cfg["paths"]["predictions"])
+    checkpoint_every = int(cls_cfg.get("checkpoint_every", 100))
 
     print(f"[setup] Split          : {args.split} -> {split_path}", flush=True)
     print(f"[setup] Codebook       : {codebook_path}", flush=True)
     print(f"[setup] Classifier     : {model_path}", flush=True)
-    print(f"[setup] Output JSON    : {out_path}", flush=True)
+    print(f"[setup] Output JSON    : {out_path}  (checkpoint cada {checkpoint_every})", flush=True)
+
+    if args.rebuild and out_path.exists():
+        out_path.unlink()
+        print(f"[setup] --rebuild: borrado {out_path}", flush=True)
 
     coco = load_coco(split_path)
     codebook = load_codebook(codebook_path)
@@ -66,16 +92,42 @@ def main() -> int:
     inf_cfg = cls_cfg["inference"]
 
     predictions: list[dict] = []
+    predicted_ids: set[int] = set()
+    if out_path.exists():
+        try:
+            with open(out_path, encoding="utf-8") as f:
+                predictions = json.load(f)
+            predicted_ids = {int(p["image_id"]) for p in predictions}
+            print(
+                f"[resume] {len(predictions)} predicciones existentes, "
+                f"{len(predicted_ids)} image_ids ya cubiertos.",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[resume] error leyendo {out_path}: {e!r}. Empiezo de cero.", flush=True)
+            predictions = []
+            predicted_ids = set()
+
     skipped = 0
     t0 = time.time()
     log_every = max(1, len(images) // 30)
-    n_det_total = 0
+    n_det_total = sum(1 for _ in predictions)
+    n_new_since_ckpt = 0
+
+    def flush_predictions() -> None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(predictions, f)
 
     for i, im in enumerate(images, 1):
+        if int(im["id"]) in predicted_ids:
+            continue
         path = img_dir / im["file_name"]
         img = cv2.imread(str(path))
         if img is None:
             skipped += 1
+            predicted_ids.add(int(im["id"]))
+            n_new_since_ckpt += 1
             continue
         detections = detect(
             img,
@@ -92,25 +144,31 @@ def main() -> int:
         for d in detections:
             x, y, w, h = d.bbox
             predictions.append({
-                "image_id": im["id"],
-                "category_id": d.class_id,
+                "image_id": int(im["id"]),
+                "category_id": int(d.class_id),
                 "bbox": [int(x), int(y), int(w), int(h)],
-                "score": d.score,
+                "score": float(d.score),
             })
         n_det_total += len(detections)
+        predicted_ids.add(int(im["id"]))
+        n_new_since_ckpt += 1
 
         if i % log_every == 0 or i == len(images):
             elapsed = time.time() - t0
             eta = elapsed / i * (len(images) - i)
             print(
                 f"[infer] [{i:4d}/{len(images)}] elapsed {elapsed:.0f}s "
-                f"eta {eta:.0f}s  det_total={n_det_total} skipped={skipped}",
+                f"eta {eta:.0f}s  det_total={n_det_total} skipped={skipped} "
+                f"done={len(predicted_ids)}",
                 flush=True,
             )
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(predictions, f)
+        if n_new_since_ckpt >= checkpoint_every:
+            flush_predictions()
+            n_new_since_ckpt = 0
+            print(f"[infer] [checkpoint] saved {out_path}", flush=True)
+
+    flush_predictions()
     print(f"[done] {len(predictions)} predictions written: {out_path}", flush=True)
     return 0
 
