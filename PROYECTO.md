@@ -423,11 +423,13 @@ grocery-detection/
 - `uv.lock` fija versiones de todas las deps.
 - Comandos exactos para reproducir cada stage documentados en `README.md` + `RUN_LOCAL_FEDORA.md` + `RUN_COLAB.md`.
 - Checkpoint reanudable: cualquier corte se recupera sin perder más de N imágenes (default N=100).
+- **Escritura atómica** (`utils/atomic.py`: `atomic_savez_compressed`, `atomic_write_json`, `atomic_write_pickle`) en todos los puntos de persistencia. Un corte mid-flush no deja archivos corruptos, solo basura `.tmp` (limpiable a mano).
+- **Drive como almacenamiento primario en Colab**: `link_processed_to_drive()` / `link_predictions_to_drive()` symlinkan los directorios de output a `MyDrive/grocery-detection/{processed,predictions}/`. Las escrituras del pipeline caen directas a Drive — el reanude tras corte de Colab es transparente.
 
 ## 12. Pendientes / decisiones abiertas
 
-- [ ] **Aplicar fix symlink-Drive en `colab_helper.py`**: `data/processed/` como symlink a `MyDrive/grocery-detection/processed/` → cada checkpoint se escribe directo a Drive, robusto frente a desconexiones Colab. Propuesto, no implementado.
-- [ ] **Atomic write** (`tmp + rename`) en `_save_partial` de `training_set.py` y `hard_negative.py` — protege contra corrupción mid-write. Propuesto, no implementado.
+- [x] ~~Symlink `data/processed/` ↔ `MyDrive/grocery-detection/processed/` en `colab_helper.py` (`link_processed_to_drive`, `link_predictions_to_drive`)~~ ✅ implementado.
+- [x] ~~Atomic write (`tmp + rename`) en todas las escrituras persistentes (`utils/atomic.py` + integrado en `training_set.py`, `hard_negative.py`, `classifier.py`, `bovw.py`, `run_classical_infer.py`)~~ ✅ implementado.
 - [ ] H6 — YOLOv8s scaffolding.
 - [ ] H7 — Framework evaluación común + unit tests sobre métricas.
 - [ ] H8 — Módulo de perturbaciones.
@@ -443,7 +445,7 @@ grocery-detection/
 
 | Riesgo | Mitigación |
 |---|---|
-| Colab desconecta mid-run | Checkpoint cada 100 imgs. Resume automático. Keep-alive JS en navegador. Considerar Colab Pro. Aplicar fix symlink-Drive pendiente. |
+| Colab desconecta mid-run | Mitigado: `data/processed/` y `reports/predictions/` symlinkados a Drive (`link_*_to_drive`) + escritura atómica → cada checkpoint cae directo a Drive y un corte mid-flush no corrompe el archivo. Pérdida máxima por corte: ≤100 imgs. Adicionalmente: keep-alive JS en navegador, considerar Colab Pro para sesiones largas. |
 | PC local incapaz de correr H4 | Alternativa Colab consolidada con `RUN_COLAB.md`. Segundo PC Fedora documentado en `RUN_LOCAL_FEDORA.md`. |
 | Selective Search lento | `mode: fast` + `max_per_image: 300` + resize `max_side: 640`. Cachear proposals si fuese necesario. |
 | Pipeline A clasifica casi todo como background | Hard neg mining + ajuste `score_thresh`. |
