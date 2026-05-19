@@ -240,15 +240,20 @@ Justificación:
 - SGD momentum 0.937, weight decay 5e-4, LR cosine + warmup.
 - Semillas fijas.
 
-### 5.4. Implementación pendiente
+### 5.4. Implementación (scaffolding listo, lo lleva colaborador)
 
-Pendiente crear:
-- `configs/deep_yolo.yaml`
-- `src/grocery_detection/data/coco_to_yolo.py` — convierte `train.json`, `val.json` a formato YOLO (txt por imagen + dataset YAML).
-- `src/grocery_detection/deep/train.py` — wrapper alrededor de `ultralytics.YOLO`.
-- `src/grocery_detection/deep/infer.py`.
-- `src/grocery_detection/deep/export_coco.py` — YOLO preds → COCO JSON.
-- `notebooks/colab_yolo_train.ipynb`.
+Estado: archivos creados, parámetros con defaults razonables, listo para entrenar. Lo conduce un compañero — onboarding en [`ONBOARDING_DL.md`](ONBOARDING_DL.md).
+
+- ✅ `configs/deep_yolo.yaml` — hyperparams + augmentations (HSV jitter, mosaic, mixup, fliplr=0.5, flipud=0).
+- ✅ `src/grocery_detection/data/coco_to_yolo.py` — convierte splits COCO a formato YOLO (txt label por imagen + split lists).
+- ✅ `src/grocery_detection/deep/train.py` — wrapper sobre `ultralytics.YOLO`.
+- ✅ `src/grocery_detection/deep/infer.py` — wrapper de inferencia.
+- ✅ `src/grocery_detection/deep/export_coco.py` — Results → COCO results JSON (alineado con eval común).
+- ✅ `scripts/prepare_yolo_dataset.py` — CLI: convierte splits COCO → estructura YOLO (idempotente).
+- ✅ `scripts/run_deep_train.py` — CLI: fine-tune.
+- ✅ `scripts/run_deep_infer.py` — CLI: inferencia + export COCO.
+- ✅ `notebooks/colab_yolo_train.ipynb` — Colab entrenamiento end-to-end con Drive symlink.
+- ✅ `notebooks/colab_yolo_infer.ipynb` — Colab inferencia + export.
 
 ## 6. Framework de evaluación común (pendiente H7)
 
@@ -384,7 +389,7 @@ grocery-detection/
 | **H4** | Pipeline A — training + inferencia | ✅ `training_set.py` + `classifier.py` + `pipeline.py` + scripts CLI. Checkpoint reanudable cada 100 imgs. |
 | **H5** | Pipeline A — hard negative mining | ✅ `hard_negative.py` + `run_classical_hard_neg.py`. Resume a 2 niveles (ronda + intra-ronda). |
 | **Colab workflow** | Ejecutar H4-H5 en Colab | ✅ `scripts/colab_helper.py` + 4 notebooks (`colab_build_features`, `colab_train_svm`, `colab_hard_neg`, `colab_infer`). |
-| **H6** | Pipeline B — YOLOv8s fine-tune | ⏳ pendiente. |
+| **H6** | Pipeline B — YOLOv8s fine-tune | 🛠️ scaffolding completo (configs + deep/ + scripts + notebooks Colab). Lo lleva colaborador. Ver `ONBOARDING_DL.md`. |
 | **H7** | Framework evaluación común | ⏳ pendiente. |
 | **H8** | Análisis de robustez | ⏳ pendiente. |
 | **H9** | Demo webcam | ⏳ opcional. |

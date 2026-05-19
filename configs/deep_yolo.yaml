@@ -1,0 +1,52 @@
+# Hyperparámetros para fine-tune de YOLOv8s sobre el subset 20-class D2S.
+#
+# Coherente con la decisión cerrada en PROYECTO.md §5: single-shot detector,
+# pesos pretrained COCO, entrenamiento en Colab T4. Augmentations
+# pensadas para dominio retail (productos vistos desde arriba, fondos
+# variables) — flip vertical desactivado porque los productos no se ven
+# invertidos en uso real.
+
+model:
+  weights: yolov8s.pt     # ultralytics descarga automáticamente la primera vez
+  pretrained: true
+
+training:
+  epochs: 100
+  batch: 16               # cabe en T4 free con imgsz 640
+  imgsz: 640
+  freeze_backbone_epochs: 5   # freeze el backbone las primeras N épocas
+  optimizer: SGD
+  lr0: 0.01
+  lrf: 0.01               # cosine final lr factor
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  patience: 20            # early stopping sobre mAP@0.5 val
+  seed: 42
+  workers: 4
+
+augmentations:
+  hsv_h: 0.015            # tono ±1.5%
+  hsv_s: 0.7              # saturación ±70%
+  hsv_v: 0.4              # brillo ±40%
+  degrees: 15             # rotación ±15°
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0             # NO vertical flip — productos no aparecen invertidos
+  fliplr: 0.5             # horizontal flip OK
+  mosaic: 1.0             # mosaic SIEMPRE
+  mixup: 0.1              # mixup ligero
+  copy_paste: 0.0
+  erasing: 0.4            # random erasing — simula oclusión parcial
+
+paths:
+  dataset_yaml: data/processed/yolo/dataset.yaml
+  output_dir: data/processed/yolo_runs           # ultralytics project root
+  best_weights: data/processed/yolo_best.pt      # copia canónica del best.pt
+  predictions: reports/predictions/yolo_test.json
+
+inference:
+  conf: 0.001             # threshold bajo para curvas PR ricas en eval
+  iou: 0.7                # NMS IoU

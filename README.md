@@ -152,5 +152,6 @@ Ver sección 8 de [PROYECTO.md](PROYECTO.md). Solo se materializan los módulos 
 - ✅ **H3**: componentes pipeline clásico (`classical/proposals.py`, `descriptors/{hog,sift,bovw}.py`) + `train_codebook.py` (K=300) + `02_classical_dev.ipynb`. Codebook entrenado en `data/processed/codebook.pkl`.
 - ✅ **H4**: `run_classical_train.py` — extracción de features con checkpoint + AdditiveChi2 + LinearSVC OvR.
 - ✅ **H5**: `run_classical_hard_neg.py` — mining loop con resume a nivel ronda + intra-ronda.
-- ✅ **Colab workflow**: `notebooks/colab_{build_features,train_svm,hard_neg,infer}.ipynb` + `scripts/colab_helper.py`. Todo H1-H5 ejecutable sin tocar el PC local.
-- ⏳ **H6-H10**: ver [PROYECTO.md sección 9](PROYECTO.md).
+- ✅ **Colab workflow clásico**: `notebooks/colab_{build_features,train_svm,hard_neg,infer}.ipynb` + `scripts/colab_helper.py`. Todo H1-H5 ejecutable sin tocar el PC local.
+- 🛠️ **H6 (DL, en marcha)**: scaffolding completo de YOLOv8s listo (`src/grocery_detection/deep/*`, `configs/deep_yolo.yaml`, `scripts/{prepare_yolo_dataset,run_deep_train,run_deep_infer}.py`, `notebooks/colab_yolo_{train,infer}.ipynb`). Llevado por compañero. Ver [`ONBOARDING_DL.md`](ONBOARDING_DL.md).
+- ⏳ **H7-H10**: ver [PROYECTO.md sección 9](PROYECTO.md).
