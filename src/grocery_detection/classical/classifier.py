@@ -22,6 +22,7 @@ from sklearn.kernel_approximation import AdditiveChi2Sampler
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.svm import LinearSVC
 
+from ..utils.atomic import atomic_write_pickle
 from .labeling import BACKGROUND
 
 
@@ -101,9 +102,7 @@ def train_chi2_svm(
 
 
 def save(clf: ClassicalSVM, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(clf, f)
+    atomic_write_pickle(path, clf)
 
 
 def load(path: Path) -> ClassicalSVM:

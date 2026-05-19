@@ -14,6 +14,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from ..utils.atomic import atomic_savez_compressed, atomic_write_json
 from .classifier import ClassicalSVM
 from .features import extract_features_batch
 from .iou import iou_matrix
@@ -168,8 +169,7 @@ def _save_partial(
     else:
         X = np.zeros((0,), dtype=np.float32)
     pids = np.array(sorted(processed_ids), dtype=np.int64)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, X=X, processed_ids=pids)
+    atomic_savez_compressed(path, X=X, processed_ids=pids)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +188,4 @@ def load_round_state(path: Path) -> int:
 
 
 def save_round_state(path: Path, completed_rounds: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"completed_rounds": completed_rounds}, f)
+    atomic_write_json(path, {"completed_rounds": completed_rounds})

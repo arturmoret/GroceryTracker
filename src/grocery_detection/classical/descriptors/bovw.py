@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 from sklearn.cluster import KMeans
 
+from ...utils.atomic import atomic_write_pickle
+
 
 def train_codebook(
     descriptors: np.ndarray,
@@ -70,9 +72,7 @@ def encode_bovw(
 
 
 def save_codebook(codebook: MiniBatchKMeans, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(codebook, f)
+    atomic_write_pickle(path, codebook)
 
 
 def load_codebook(path: Path) -> MiniBatchKMeans:

@@ -16,6 +16,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from ..utils.atomic import atomic_savez_compressed
 from .descriptors.bovw import load_codebook
 from .features import extract_features_batch, feature_dim
 from .labeling import BACKGROUND, label_proposals
@@ -195,8 +196,7 @@ def _save_partial(
         X = np.zeros((0,), dtype=np.float32)
         y = np.zeros((0,), dtype=np.int64)
     pids = np.array(sorted(processed_ids), dtype=np.int64)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, X=X, y=y, processed_ids=pids)
+    atomic_savez_compressed(path, X=X, y=y, processed_ids=pids)
 
 
 def load_coco(path: Path) -> dict:
@@ -205,9 +205,8 @@ def load_coco(path: Path) -> dict:
 
 
 def save_features(path: Path, X: np.ndarray, y: np.ndarray) -> None:
-    """Guarda X, y (sin processed_ids). Para cache final ya completo."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, X=X, y=y)
+    """Guarda X, y (sin processed_ids). Atómico."""
+    atomic_savez_compressed(path, X=X, y=y)
 
 
 def load_features(path: Path) -> tuple[np.ndarray, np.ndarray]:

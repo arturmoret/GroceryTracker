@@ -6,6 +6,19 @@ Guía paso a paso para ejecutar todo el pipeline clásico sin tocar tu PC local 
 
 ---
 
+## Cómo funciona el resume (importante)
+
+Cada notebook montará `data/processed/` y `reports/predictions/` como **symlinks directos a Drive** vía `link_processed_to_drive()` / `link_predictions_to_drive()`. Consecuencias:
+
+- Cada checkpoint del script (cada 100 imgs) se escribe **directo a `MyDrive/grocery-detection/processed/`**, no a `/content/` (volátil).
+- Escrituras son **atómicas** (tmp + rename): si Colab muere a mitad del flush, el archivo final no queda corrupto.
+- Si Colab desconecta: reabres el notebook, **Run All**, los scripts detectan el checkpoint en Drive y reanudan desde la última imagen procesada.
+- **Nunca pierdes más de 100 imágenes** por corte.
+
+No hay paso de sync manual al final. La salida de cada stage ya está en Drive cuando el script termina su 100º checkpoint.
+
+---
+
 ## 0. Setup en Google Drive (una sola vez)
 
 Crear esta estructura en `MyDrive/`:
@@ -54,7 +67,7 @@ cd GroceryTracker
 bash scripts/setup.sh
 ```
 
-Después: descarga D2S a `data/raw/` (mismos archivos que ya tienes en Drive — o copia desde Drive si tienes desktop sync), y:
+Después: descarga D2S a `data/raw/` y:
 
 ```bash
 uv run python scripts/prepare_d2s.py     # extrae D2S
@@ -81,11 +94,11 @@ Selecciona el notebook y dale **Runtime → Run all**.
 
 Extrae features (Selective Search + HOG + SIFT + BoVW) sobre las imágenes train.
 
-- **Duración estimada**: 2-5 horas (depende del slot de CPU que te toque).
+- **Duración estimada**: 2-5 horas (depende del slot de CPU).
 - **Output en Drive**: `processed/classical_features.npz` (~150 MB).
-- **Checkpoint**: cada 100 imgs. Si Colab desconecta, vuelves a abrir y *Run all* — reanuda donde quedó.
+- **Checkpoint**: cada 100 imgs, directo a Drive, atómico. Robusto a cortes.
 
-Si nunca corriste el paso 2 (los baratos en local), descomenta las dos últimas celdas del notebook (`# run_script("scripts/prepare_splits.py")` y `# run_script("scripts/train_codebook.py")`) y córrelas primero.
+Si nunca corriste el paso 2 (los baratos en local), descomenta las dos últimas celdas del notebook (`# run_script("scripts/prepare_splits.py")` y `# run_script("scripts/train_codebook.py")`) y córrelas antes del build.
 
 ### 3.2. `notebooks/colab_train_svm.ipynb`
 
@@ -111,11 +124,11 @@ Aplica el detector entrenado sobre el split test.
 
 - **Duración estimada**: 1-2 horas.
 - **Output en Drive**: `predictions/classical_test.json`.
-- **Checkpoint**: cada 100 imgs vuelca el JSON. Si Colab desconecta, *Run all* y reanuda.
+- **Checkpoint**: cada 100 imgs vuelca el JSON en Drive (atómico). Reanuda automático.
 
-## 4. ¿Qué hago si Colab desconecta?
+## 4. Qué hago si Colab desconecta
 
-Es habitual. Free tier corta sesiones tras ~90 min de inactividad o ~12 h activas.
+Habitual. Free tier corta sesiones tras ~90 min de inactividad o ~12 h activas.
 
 ### Mitigación 1 — Keep-alive en el navegador
 
@@ -133,24 +146,23 @@ En la pestaña de Colab abierta:
     setInterval(KeepAlive, 60000);
     ```
 
-Hace click virtual cada 60 s. No es bulletproof pero aguanta varias horas.
+Hace click virtual cada 60 s. No bulletproof pero aguanta varias horas más.
 
-### Mitigación 2 — Reanudar manualmente
+### Mitigación 2 — Resume automático
 
-Si peta:
+Cuando Colab muera:
 
 1. Reabre el notebook.
 2. *Runtime → Run all*.
-3. Las celdas iniciales recargan el state desde Drive (mount + clone + sync_from_drive).
-4. El script detecta el checkpoint y salta las imágenes ya procesadas.
+3. Las celdas iniciales: clone repo + mount Drive + install deps + extraer D2S + `link_processed_to_drive()`.
+4. Como `data/processed/` apunta directo a Drive, el checkpoint del corte anterior **ya está allí**.
+5. Script detecta `processed_ids` en el `.npz` (o `image_id`s ya predichos en el JSON), salta lo hecho, sigue.
 
-**Caveat actual**: el checkpoint se vuelca a `/content/` (volátil), y solo se sube a Drive al **final** del notebook. Si Colab muere antes de la última celda, lo procesado en esa sesión se pierde. Cada *Run all* recupera el estado de la **última sesión completa**.
-
-> Fix robusto pendiente: symlinkar `data/processed/` directo a Drive para que cada checkpoint se escriba directo allí. Si quieres, dímelo y lo aplico.
+Pierdes como mucho las imágenes procesadas desde el último checkpoint (≤100).
 
 ### Mitigación 3 — Colab Pro
 
-~10 €/mes. Sesiones de 24 h, background execution (¡corre sin tener la tab abierta!), CPU mejor. Un mes durante el proyecto puede compensar.
+~10 €/mes. Sesiones de 24 h, background execution (corre sin tener la tab abierta), CPU mejor. Un mes durante el proyecto puede compensar.
 
 ## 5. Dónde quedan los artifacts
 
@@ -164,7 +176,9 @@ processed/
     codebook.pkl
     classical_features.npz       ← features extraídas (H4)
     classical_svm.pkl            ← clasificador entrenado (H4 + H5)
+    classical_svm_artifact.pkl   ← dict portable (intermediario de H4)
     .hardneg_state.json          ← marcador de rondas completadas (H5)
+    classical_features.hardneg_partial.npz  ← intra-ronda (efímero, se borra al cerrar ronda)
 
 predictions/
     classical_test.json          ← predicciones del detector clásico sobre test
@@ -199,22 +213,15 @@ Drive no está montado o la carpeta no existe. Verifica:
 
 Los .tar.xz no están en Drive aún. Sube `d2s_images_v*.tar.xz` y `d2s_annotations_v*.tar.xz` a esa carpeta y re-ejecuta `setup_dataset()`.
 
-### "(skip) train.json no existe en Drive"
+### `link_processed_to_drive()` falla con `OSError: ... in use`
 
-Falta el paso 2 — `prepare_splits.py` no se ha corrido (ni local ni en Colab). O bien:
+Drive FUSE puede estar bloqueando un archivo abierto. Reinicia el runtime (*Runtime → Restart runtime*), re-corre todas las celdas.
 
-- En local: córrelo y sube los JSON a Drive.
-- En el notebook `colab_build_features.ipynb`: descomenta la celda `# run_script("scripts/prepare_splits.py")` al final.
+### El JSON de predicciones aparece como `classical_test.json.tmp` en Drive
 
-### "(skip) codebook.pkl no existe en Drive"
+El script murió a mitad de un flush atómico. El `.tmp` es basura — bórralo a mano (web Drive o `rm` en otra celda). El último JSON limpio sigue siendo el bueno; al relanzar el notebook reanudará desde ahí.
 
-Igual que el anterior pero para `train_codebook.py`.
-
-### "El runtime de Colab se ha desconectado"
-
-Ver sección 4. Vuelve a abrir, *Run all*, reanuda.
-
-### "ImportError: No module named cv2.ximgproc"
+### `ImportError: No module named cv2.ximgproc`
 
 Te toca un Colab con OpenCV no-contrib. `install_deps()` debería arreglarlo (`pip install opencv-contrib-python`). Si persiste:
 
@@ -238,7 +245,7 @@ svm = OneVsRestClassifier(
 
 ### Después de `import_colab_svm.py`, "ERROR: artifact incompleto"
 
-El `.pkl` artifact tiene una key distinta a las esperadas (`sampler`, `svm`, `target_class_ids`). Verifica que la celda *3. Entrenar SVM* terminó OK y que la *4. Guardar artifact* corrió después.
+El `.pkl` artifact tiene una key distinta a las esperadas (`sampler`, `svm`, `target_class_ids`). Verifica que la celda *Entrenar SVM* terminó OK y que la *Guardar artifact* corrió después.
 
 ---
 
@@ -248,6 +255,7 @@ El `.pkl` artifact tiene una key distinta a las esperadas (`sampler`, `svm`, `ta
 2. Sube D2S `.tar.xz` a `raw/`.
 3. (Local barato) `prepare_splits.py` + `train_codebook.py` → sube JSONs + codebook a `processed/`.
 4. Colab en orden: `build_features.ipynb` → `train_svm.ipynb` → `hard_neg.ipynb` (opcional) → `infer.ipynb`.
-5. Salida final: `predictions/classical_test.json` en Drive.
+5. Cada notebook llama a `link_processed_to_drive()` → escrituras directas a Drive con write atómico.
+6. Salida final: `predictions/classical_test.json` en Drive.
 
-Si Colab desconecta: keep-alive JS + *Run all* manual al reabrir = reanuda desde último checkpoint.
+Si Colab desconecta: keep-alive JS + *Run all* al reabrir = reanuda desde último checkpoint en Drive.

@@ -116,6 +116,75 @@ def setup_dataset(
     print(f"[dataset] symlink {repo_data_d2s} → {d2s_local}", flush=True)
 
 
+def link_dir_to_drive(
+    repo_subdir: str,
+    drive_subdir: str,
+    drive_root: str = DRIVE_ROOT_DEFAULT,
+    repo_dir: str = REPO_DIR_DEFAULT,
+) -> None:
+    """Reemplaza `{repo}/{repo_subdir}` por un symlink a `{drive_root}/{drive_subdir}`.
+
+    Resultado: cada vez que el código local escribe en `{repo}/{repo_subdir}/<algo>`,
+    el archivo cae directamente en Drive. Combinado con `atomic_write_*` en el
+    backend, esto hace todas las escrituras de checkpoint resistentes a cortes
+    de Colab — el último checkpoint completo siempre queda en Drive, no en
+    `/content` (que se borra al desconectar).
+
+    Idempotente:
+    - Si ya es symlink al destino correcto: no-op.
+    - Si es symlink a otro destino: lo borra y vuelve a crear.
+    - Si es carpeta con contenido: mueve los archivos a Drive antes de symlinkar
+      (no destruye datos locales si ya tenías cosas).
+    """
+    drive_dir = Path(drive_root) / drive_subdir
+    drive_dir.mkdir(parents=True, exist_ok=True)
+    local = Path(repo_dir) / repo_subdir
+    local.parent.mkdir(parents=True, exist_ok=True)
+
+    if local.is_symlink():
+        try:
+            current_target = local.resolve(strict=False)
+        except OSError:
+            current_target = None
+        if current_target == drive_dir.resolve():
+            print(f"[link] {local} ya symlinkado a {drive_dir}", flush=True)
+            return
+        local.unlink()
+    elif local.exists():
+        moved = 0
+        for item in local.iterdir():
+            dst = drive_dir / item.name
+            if not dst.exists():
+                shutil.move(str(item), str(dst))
+                moved += 1
+        # Intenta borrar; si la carpeta no quedó vacía (colisiones), lo dice claro.
+        try:
+            local.rmdir()
+        except OSError:
+            shutil.rmtree(local)
+        if moved:
+            print(f"[link] migrados {moved} archivos de {local} → {drive_dir}", flush=True)
+
+    local.symlink_to(drive_dir)
+    print(f"[link] {local} → {drive_dir}", flush=True)
+
+
+def link_processed_to_drive(
+    drive_root: str = DRIVE_ROOT_DEFAULT,
+    repo_dir: str = REPO_DIR_DEFAULT,
+) -> None:
+    """Atajo: symlinka `data/processed/` ↔ `Drive/grocery-detection/processed/`."""
+    link_dir_to_drive("data/processed", "processed", drive_root, repo_dir)
+
+
+def link_predictions_to_drive(
+    drive_root: str = DRIVE_ROOT_DEFAULT,
+    repo_dir: str = REPO_DIR_DEFAULT,
+) -> None:
+    """Atajo: symlinka `reports/predictions/` ↔ `Drive/grocery-detection/predictions/`."""
+    link_dir_to_drive("reports/predictions", "predictions", drive_root, repo_dir)
+
+
 def sync_from_drive(
     filenames: list[str],
     drive_subdir: str = "processed",

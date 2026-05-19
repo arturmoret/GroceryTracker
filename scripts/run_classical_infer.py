@@ -29,6 +29,7 @@ from grocery_detection.classical.classifier import load  # noqa: E402
 from grocery_detection.classical.descriptors.bovw import load_codebook  # noqa: E402
 from grocery_detection.classical.pipeline import detect  # noqa: E402
 from grocery_detection.classical.training_set import load_coco  # noqa: E402
+from grocery_detection.utils.atomic import atomic_write_json  # noqa: E402
 from grocery_detection.utils.config import load_yaml, repo_root  # noqa: E402
 from grocery_detection.utils.seed import set_seed  # noqa: E402
 
@@ -115,9 +116,7 @@ def main() -> int:
     n_new_since_ckpt = 0
 
     def flush_predictions() -> None:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(predictions, f)
+        atomic_write_json(out_path, predictions)
 
     for i, im in enumerate(images, 1):
         if int(im["id"]) in predicted_ids:
